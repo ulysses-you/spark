@@ -252,9 +252,9 @@ case class RefreshFunctionCommand(
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val catalog = sparkSession.sessionState.catalog
     if (FunctionRegistry.builtin.functionExists(FunctionIdentifier(functionName))) {
-      throw new AnalysisException(s"Cannot refresh native function $functionName")
+      throw new AnalysisException(s"Cannot refresh builtin function $functionName")
     } else if (catalog.isTemporaryFunction(FunctionIdentifier(functionName, databaseName))) {
-      throw new AnalysisException(s"Cannot refresh temp function $functionName")
+      throw new AnalysisException(s"Cannot refresh temporary function $functionName")
     } else {
       // we only refresh the permanent function.
       // there are 4 cases:
