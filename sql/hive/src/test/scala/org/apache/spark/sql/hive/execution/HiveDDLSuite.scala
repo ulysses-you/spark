@@ -2314,6 +2314,10 @@ class HiveDDLSuite
   }
 
   test("SPARK-20680: do not support for null column datatype") {
+    withView("nullTypeView") {
+      sql("CREATE VIEW nullTypeView AS SELECT NULL AS col")
+    }
+
     withTable("t") {
       withView("tabNullType") {
         hiveClient.runSqlHive("CREATE TABLE t (t1 int)")
