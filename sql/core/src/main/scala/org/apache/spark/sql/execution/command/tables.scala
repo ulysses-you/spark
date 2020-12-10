@@ -34,10 +34,10 @@ import org.apache.spark.sql.catalyst.catalog._
 import org.apache.spark.sql.catalyst.catalog.CatalogTableType._
 import org.apache.spark.sql.catalyst.catalog.CatalogTypes.TablePartitionSpec
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference}
-import org.apache.spark.sql.catalyst.plans.DescribeTableSchema
+import org.apache.spark.sql.catalyst.plans.DescribeCommandSchema
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.util.{escapeSingleQuotedString, quoteIdentifier, CaseInsensitiveMap}
-import org.apache.spark.sql.execution.datasources.{DataSource, PartitioningUtils}
+import org.apache.spark.sql.execution.datasources.DataSource
 import org.apache.spark.sql.execution.datasources.csv.CSVFileFormat
 import org.apache.spark.sql.execution.datasources.json.JsonFileFormat
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
@@ -47,6 +47,7 @@ import org.apache.spark.sql.execution.datasources.v2.orc.OrcDataSourceV2
 import org.apache.spark.sql.execution.datasources.v2.parquet.ParquetDataSourceV2
 import org.apache.spark.sql.internal.{HiveSerDe, SQLConf}
 import org.apache.spark.sql.types._
+import org.apache.spark.sql.util.PartitioningUtils
 import org.apache.spark.sql.util.SchemaUtils
 
 /**
@@ -310,9 +311,6 @@ case class LoadDataCommand(
         sparkSession.sessionState.conf.resolver)
     }
 
-    if (targetTable.tableType == CatalogTableType.VIEW) {
-      throw new AnalysisException(s"Target table in LOAD DATA cannot be a view: $tableIdentwithDB")
-    }
     if (DDLUtils.isDatasourceTable(targetTable)) {
       throw new AnalysisException(
         s"LOAD DATA is not supported for datasource tables: $tableIdentwithDB")
@@ -354,7 +352,7 @@ case class LoadDataCommand(
         // entire  string will be considered while making a Path instance,this is mainly done
         // by considering the wild card scenario in mind.as per old logic query param  is
         // been considered while creating URI instance and if path contains wild card char '?'
-        // the remaining charecters after '?' will be removed while forming URI instance
+        // the remaining characters after '?' will be removed while forming URI instance
         LoadDataCommand.makeQualified(defaultFS, uriPath, loadPath)
       }
     }
@@ -450,10 +448,6 @@ case class TruncateTableCommand(
     if (table.tableType == CatalogTableType.EXTERNAL) {
       throw new AnalysisException(
         s"Operation not allowed: TRUNCATE TABLE on external tables: $tableIdentWithDB")
-    }
-    if (table.tableType == CatalogTableType.VIEW) {
-      throw new AnalysisException(
-        s"Operation not allowed: TRUNCATE TABLE on views: $tableIdentWithDB")
     }
     if (table.partitionColumnNames.isEmpty && partitionSpec.isDefined) {
       throw new AnalysisException(
@@ -595,7 +589,7 @@ case class TruncateTableCommand(
 }
 
 abstract class DescribeCommandBase extends RunnableCommand {
-  override val output = DescribeTableSchema.describeTableAttributes()
+  override val output = DescribeCommandSchema.describeTableAttributes()
 
   protected def describeSchema(
       schema: StructType,
@@ -657,7 +651,7 @@ case class DescribeTableCommand(
       }
     }
 
-    result
+    result.toSeq
   }
 
   private def describePartitionInfo(table: CatalogTable, buffer: ArrayBuffer[Row]): Unit = {
@@ -740,7 +734,7 @@ case class DescribeQueryCommand(queryText: String, plan: LogicalPlan)
     val result = new ArrayBuffer[Row]
     val queryExecution = sparkSession.sessionState.executePlan(plan)
     describeSchema(queryExecution.analyzed.schema, result, header = false)
-    result
+    result.toSeq
   }
 }
 
@@ -758,14 +752,7 @@ case class DescribeColumnCommand(
     isExtended: Boolean)
   extends RunnableCommand {
 
-  override val output: Seq[Attribute] = {
-    Seq(
-      AttributeReference("info_name", StringType, nullable = false,
-        new MetadataBuilder().putString("comment", "name of the column info").build())(),
-      AttributeReference("info_value", StringType, nullable = false,
-        new MetadataBuilder().putString("comment", "value of the column info").build())()
-    )
-  }
+  override val output: Seq[Attribute] = DescribeCommandSchema.describeColumnAttributes()
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val catalog = sparkSession.sessionState.catalog
@@ -815,7 +802,7 @@ case class DescribeColumnCommand(
       } yield histogramDescription(hist)
       buffer ++= histDesc.getOrElse(Seq(Row("histogram", "NULL")))
     }
-    buffer
+    buffer.toSeq
   }
 
   private def histogramDescription(histogram: Histogram): Seq[Row] = {
@@ -884,12 +871,20 @@ case class ShowTablesCommand(
       //
       // Note: tableIdentifierPattern should be non-empty, otherwise a [[ParseException]]
       // should have been thrown by the sql parser.
-      val tableIdent = TableIdentifier(tableIdentifierPattern.get, Some(db))
-      val table = catalog.getTableMetadata(tableIdent).identifier
-      val partition = catalog.getPartition(tableIdent, partitionSpec.get)
-      val database = table.database.getOrElse("")
-      val tableName = table.table
-      val isTemp = catalog.isTemporaryTable(table)
+      val table = catalog.getTableMetadata(TableIdentifier(tableIdentifierPattern.get, Some(db)))
+
+      DDLUtils.verifyPartitionProviderIsHive(sparkSession, table, "SHOW TABLE EXTENDED")
+
+      val tableIdent = table.identifier
+      val normalizedSpec = PartitioningUtils.normalizePartitionSpec(
+        partitionSpec.get,
+        table.partitionColumnNames,
+        tableIdent.quotedString,
+        sparkSession.sessionState.conf.resolver)
+      val partition = catalog.getPartition(tableIdent, normalizedSpec)
+      val database = tableIdent.database.getOrElse("")
+      val tableName = tableIdent.table
+      val isTemp = catalog.isTemporaryTable(tableIdent)
       val information = partition.simpleString
       Seq(Row(database, tableName, isTemp, s"$information\n"))
     }
@@ -918,15 +913,20 @@ case class ShowTablePropertiesCommand(table: TableIdentifier, propertyKey: Optio
   }
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
-    val catalogTable = sparkSession.sessionState.catalog.getTableMetadata(table)
-    propertyKey match {
-      case Some(p) =>
-        val propValue = catalogTable
-          .properties
-          .getOrElse(p, s"Table ${catalogTable.qualifiedName} does not have property: $p")
-        Seq(Row(propValue))
-      case None =>
-        catalogTable.properties.map(p => Row(p._1, p._2)).toSeq
+    val catalog = sparkSession.sessionState.catalog
+    if (catalog.isTemporaryTable(table)) {
+      Seq.empty[Row]
+    } else {
+      val catalogTable = catalog.getTableMetadata(table)
+      propertyKey match {
+        case Some(p) =>
+          val propValue = catalogTable
+            .properties
+            .getOrElse(p, s"Table ${catalogTable.qualifiedName} does not have property: $p")
+          Seq(Row(propValue))
+        case None =>
+          catalogTable.properties.map(p => Row(p._1, p._2)).toSeq
+      }
     }
   }
 }
@@ -988,11 +988,7 @@ case class ShowPartitionsCommand(
      * Validate and throws an [[AnalysisException]] exception under the following conditions:
      * 1. If the table is not partitioned.
      * 2. If it is a datasource table.
-     * 3. If it is a view.
      */
-    if (table.tableType == VIEW) {
-      throw new AnalysisException(s"SHOW PARTITIONS is not allowed on a view: $tableIdentWithDB")
-    }
 
     if (table.partitionColumnNames.isEmpty) {
       throw new AnalysisException(
@@ -1002,20 +998,18 @@ case class ShowPartitionsCommand(
     DDLUtils.verifyPartitionProviderIsHive(sparkSession, table, "SHOW PARTITIONS")
 
     /**
-     * Validate the partitioning spec by making sure all the referenced columns are
+     * Normalizes the partition spec w.r.t the partition columns and case sensitivity settings,
+     * and validates the spec by making sure all the referenced columns are
      * defined as partitioning columns in table definition. An AnalysisException exception is
      * thrown if the partitioning spec is invalid.
      */
-    if (spec.isDefined) {
-      val badColumns = spec.get.keySet.filterNot(table.partitionColumnNames.contains)
-      if (badColumns.nonEmpty) {
-        val badCols = badColumns.mkString("[", ", ", "]")
-        throw new AnalysisException(
-          s"Non-partitioning column(s) $badCols are specified for SHOW PARTITIONS")
-      }
-    }
+    val normalizedSpec = spec.map(partitionSpec => PartitioningUtils.normalizePartitionSpec(
+      partitionSpec,
+      table.partitionColumnNames,
+      table.identifier.quotedString,
+      sparkSession.sessionState.conf.resolver))
 
-    val partNames = catalog.listPartitionNames(tableName, spec)
+    val partNames = catalog.listPartitionNames(tableName, normalizedSpec)
     partNames.map(Row(_))
   }
 }
@@ -1056,6 +1050,42 @@ trait ShowCreateTableCommandBase {
 
   protected def concatByMultiLines(iter: Iterable[String]): String = {
     iter.mkString("(\n  ", ",\n  ", ")\n")
+  }
+
+  protected def showCreateView(metadata: CatalogTable, builder: StringBuilder): Unit = {
+    showViewDataColumns(metadata, builder)
+    showTableComment(metadata, builder)
+    showViewProperties(metadata, builder)
+    showViewText(metadata, builder)
+  }
+
+  private def showViewDataColumns(metadata: CatalogTable, builder: StringBuilder): Unit = {
+    if (metadata.schema.nonEmpty) {
+      val viewColumns = metadata.schema.map { f =>
+        val comment = f.getComment()
+          .map(escapeSingleQuotedString)
+          .map(" COMMENT '" + _ + "'")
+
+        // view columns shouldn't have data type info
+        s"${quoteIdentifier(f.name)}${comment.getOrElse("")}"
+      }
+      builder ++= concatByMultiLines(viewColumns)
+    }
+  }
+
+  private def showViewProperties(metadata: CatalogTable, builder: StringBuilder): Unit = {
+    val viewProps = metadata.properties.filterKeys(!_.startsWith(CatalogTable.VIEW_PREFIX))
+    if (viewProps.nonEmpty) {
+      val props = viewProps.map { case (key, value) =>
+        s"'${escapeSingleQuotedString(key)}' = '${escapeSingleQuotedString(value)}'"
+      }
+
+      builder ++= s"TBLPROPERTIES ${concatByMultiLines(props)}"
+    }
+  }
+
+  private def showViewText(metadata: CatalogTable, builder: StringBuilder): Unit = {
+    builder ++= metadata.viewText.mkString("AS ", "", "\n")
   }
 }
 
@@ -1100,10 +1130,6 @@ case class ShowCreateTableCommand(table: TableIdentifier)
           )
         }
 
-        if (tableMetadata.tableType == VIEW) {
-          throw new AnalysisException("Hive view isn't supported by SHOW CREATE TABLE")
-        }
-
         if ("true".equalsIgnoreCase(tableMetadata.properties.getOrElse("transactional", "false"))) {
           throw new AnalysisException(
             "SHOW CREATE TABLE doesn't support transactional Hive table. " +
@@ -1111,10 +1137,26 @@ case class ShowCreateTableCommand(table: TableIdentifier)
               "to show Hive DDL instead.")
         }
 
-        convertTableMetadata(tableMetadata)
+        if (tableMetadata.tableType == VIEW) {
+          tableMetadata
+        } else {
+          convertTableMetadata(tableMetadata)
+        }
       }
 
-      val stmt = showCreateDataSourceTable(metadata)
+      val builder = StringBuilder.newBuilder
+
+      val stmt = if (tableMetadata.tableType == VIEW) {
+        builder ++= s"CREATE VIEW ${table.quotedString} "
+        showCreateView(metadata, builder)
+
+        builder.toString()
+      } else {
+        builder ++= s"CREATE TABLE ${table.quotedString} "
+
+        showCreateDataSourceTable(metadata, builder)
+        builder.toString()
+      }
 
       Seq(Row(stmt))
     }
@@ -1194,18 +1236,13 @@ case class ShowCreateTableCommand(table: TableIdentifier)
     }
   }
 
-  private def showCreateDataSourceTable(metadata: CatalogTable): String = {
-    val builder = StringBuilder.newBuilder
-
-    builder ++= s"CREATE TABLE ${table.quotedString} "
+  private def showCreateDataSourceTable(metadata: CatalogTable, builder: StringBuilder): Unit = {
     showDataSourceTableDataColumns(metadata, builder)
     showDataSourceTableOptions(metadata, builder)
     showDataSourceTableNonDataColumns(metadata, builder)
     showTableComment(metadata, builder)
     showTableLocation(metadata, builder)
     showTableProperties(metadata, builder)
-
-    builder.toString()
   }
 }
 
@@ -1264,10 +1301,7 @@ case class ShowCreateTableAsSerdeCommand(table: TableIdentifier)
     builder ++= s"CREATE$tableTypeString ${table.quotedString}"
 
     if (metadata.tableType == VIEW) {
-      showViewDataColumns(metadata, builder)
-      showTableComment(metadata, builder)
-      showViewProperties(metadata, builder)
-      showViewText(metadata, builder)
+      showCreateView(metadata, builder)
     } else {
       showHiveTableHeader(metadata, builder)
       showTableComment(metadata, builder)
@@ -1278,35 +1312,6 @@ case class ShowCreateTableAsSerdeCommand(table: TableIdentifier)
     }
 
     builder.toString()
-  }
-
-  private def showViewDataColumns(metadata: CatalogTable, builder: StringBuilder): Unit = {
-    if (metadata.schema.nonEmpty) {
-      val viewColumns = metadata.schema.map { f =>
-        val comment = f.getComment()
-          .map(escapeSingleQuotedString)
-          .map(" COMMENT '" + _ + "'")
-
-        // view columns shouldn't have data type info
-        s"${quoteIdentifier(f.name)}${comment.getOrElse("")}"
-      }
-      builder ++= concatByMultiLines(viewColumns)
-    }
-  }
-
-  private def showViewProperties(metadata: CatalogTable, builder: StringBuilder): Unit = {
-    val viewProps = metadata.properties.filterKeys(!_.startsWith(CatalogTable.VIEW_PREFIX))
-    if (viewProps.nonEmpty) {
-      val props = viewProps.map { case (key, value) =>
-        s"'${escapeSingleQuotedString(key)}' = '${escapeSingleQuotedString(value)}'"
-      }
-
-      builder ++= s"TBLPROPERTIES ${concatByMultiLines(props)}"
-    }
-  }
-
-  private def showViewText(metadata: CatalogTable, builder: StringBuilder): Unit = {
-    builder ++= metadata.viewText.mkString("AS ", "", "\n")
   }
 
   private def showHiveTableHeader(metadata: CatalogTable, builder: StringBuilder): Unit = {
@@ -1361,5 +1366,24 @@ case class ShowCreateTableAsSerdeCommand(table: TableIdentifier)
         builder ++= s"  OUTPUTFORMAT '${escapeSingleQuotedString(format)}'\n"
       }
     }
+  }
+}
+
+/**
+ * A command to refresh all cached entries associated with the table.
+ *
+ * The syntax of using this command in SQL is:
+ * {{{
+ *   REFRESH TABLE [db_name.]table_name
+ * }}}
+ */
+case class RefreshTableCommand(tableIdent: TableIdentifier)
+  extends RunnableCommand {
+
+  override def run(sparkSession: SparkSession): Seq[Row] = {
+    // Refresh the given table's metadata. If this table is cached as an InMemoryRelation,
+    // drop the original cached version and make the new version cached lazily.
+    sparkSession.catalog.refreshTable(tableIdent.quotedString)
+    Seq.empty[Row]
   }
 }

@@ -23,7 +23,7 @@ import java.sql.Date
 import org.apache.hadoop.hive.serde2.io.DateWritable
 import org.apache.hadoop.io.WritableUtils
 
-import org.apache.spark.sql.catalyst.util.DateTimeUtils.{rebaseGregorianToJulianDays, rebaseJulianToGregorianDays}
+import org.apache.spark.sql.catalyst.util.RebaseDateTime.{rebaseGregorianToJulianDays, rebaseJulianToGregorianDays}
 
 /**
  * The class accepts/returns days in Gregorian calendar and rebase them
@@ -54,7 +54,12 @@ class DaysWritable(
   }
 
   override def getDays: Int = julianDays
-  override def get(): Date = new Date(DateWritable.daysToMillis(julianDays))
+  override def get: Date = {
+    new Date(DateWritable.daysToMillis(julianDays))
+  }
+  override def get(doesTimeMatter: Boolean): Date = {
+    new Date(DateWritable.daysToMillis(julianDays, doesTimeMatter))
+  }
 
   override def set(d: Int): Unit = {
     gregorianDays = d

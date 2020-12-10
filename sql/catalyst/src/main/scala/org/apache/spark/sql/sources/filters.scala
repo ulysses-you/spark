@@ -25,7 +25,8 @@ import org.apache.spark.sql.connector.catalog.CatalogV2Implicits.parseColumnPath
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /**
- * A filter predicate for data sources.
+ * A filter predicate for data sources. Mapping between Spark SQL types and filter value
+ * types follow the convention for return type of [[org.apache.spark.sql.Row#get(int)]].
  *
  * @since 1.3.0
  */
@@ -163,7 +164,7 @@ case class In(attribute: String, values: Array[Any]) extends Filter {
     var h = attribute.hashCode
     values.foreach { v =>
       h *= 41
-      h += v.hashCode()
+      h += (if (v != null) v.hashCode() else 0)
     }
     h
   }

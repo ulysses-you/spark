@@ -32,10 +32,12 @@ object SchemaMergeUtils extends Logging {
    */
   def mergeSchemasInParallel(
       sparkSession: SparkSession,
+      parameters: Map[String, String],
       files: Seq[FileStatus],
       schemaReader: (Seq[FileStatus], Configuration, Boolean) => Seq[StructType])
       : Option[StructType] = {
-    val serializedConf = new SerializableConfiguration(sparkSession.sessionState.newHadoopConf())
+    val serializedConf = new SerializableConfiguration(
+      sparkSession.sessionState.newHadoopConfWithOptions(parameters))
 
     // !! HACK ALERT !!
     // Here is a hack for Parquet, but it can be used by Orc as well.
@@ -55,7 +57,8 @@ object SchemaMergeUtils extends Logging {
     // Set the number of partitions to prevent following schema reads from generating many tasks
     // in case of a small number of orc files.
     val numParallelism = Math.min(Math.max(partialFileStatusInfo.size, 1),
-      sparkSession.sparkContext.defaultParallelism)
+      sparkSession.sessionState.conf.defaultParallelism
+        .getOrElse(sparkSession.sparkContext.defaultParallelism))
 
     val ignoreCorruptFiles = sparkSession.sessionState.conf.ignoreCorruptFiles
 

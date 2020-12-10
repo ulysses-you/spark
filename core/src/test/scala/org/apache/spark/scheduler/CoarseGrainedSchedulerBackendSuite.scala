@@ -188,7 +188,6 @@ class CoarseGrainedSchedulerBackendSuite extends SparkFunSuite with LocalSparkCo
   }
 
   test("extra resources from executor") {
-    import TestUtils._
 
     val execCores = 3
     val conf = new SparkConf()
@@ -245,10 +244,11 @@ class CoarseGrainedSchedulerBackendSuite extends SparkFunSuite with LocalSparkCo
 
     val taskResources = Map(GPU -> new ResourceInformation(GPU, Array("0")))
     var taskDescs: Seq[Seq[TaskDescription]] = Seq(Seq(new TaskDescription(1, 0, "1",
-      "t1", 0, 1, mutable.Map.empty[String, Long], mutable.Map.empty[String, Long],
+      "t1", 0, 1, mutable.Map.empty[String, Long],
+      mutable.Map.empty[String, Long], mutable.Map.empty[String, Long],
       new Properties(), taskResources, bytebuffer)))
     val ts = backend.getTaskSchedulerImpl()
-    when(ts.resourceOffers(any[IndexedSeq[WorkerOffer]])).thenReturn(taskDescs)
+    when(ts.resourceOffers(any[IndexedSeq[WorkerOffer]], any[Boolean])).thenReturn(taskDescs)
 
     backend.driverEndpoint.send(ReviveOffers)
 
@@ -258,6 +258,9 @@ class CoarseGrainedSchedulerBackendSuite extends SparkFunSuite with LocalSparkCo
       assert(execResources(GPU).assignedAddrs === Array("0"))
     }
 
+    // To avoid allocating any resources immediately after releasing the resource from the task to
+    // make sure that `availableAddrs` below won't change
+    when(ts.resourceOffers(any[IndexedSeq[WorkerOffer]], any[Boolean])).thenReturn(Seq.empty)
     backend.driverEndpoint.send(
       StatusUpdate("1", 1, TaskState.FINISHED, buffer, taskResources))
 
@@ -297,7 +300,7 @@ private class CSMockExternalClusterManager extends ExternalClusterManager {
     when(ts.applicationId()).thenReturn("appid1")
     when(ts.applicationAttemptId()).thenReturn(Some("attempt1"))
     when(ts.schedulingMode).thenReturn(SchedulingMode.FIFO)
-    when(ts.nodeBlacklist()).thenReturn(Set.empty[String])
+    when(ts.excludedNodes()).thenReturn(Set.empty[String])
     ts
   }
 

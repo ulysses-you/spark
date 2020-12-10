@@ -25,7 +25,7 @@ import org.scalatest.exceptions.TestFailedException
 import org.scalatest.prop.TableDrivenPropertyChecks._
 
 import org.apache.spark.{SparkException, TaskContext}
-import org.apache.spark.sql.catalyst.ScroogeLikeExample
+import org.apache.spark.sql.catalyst.{FooClassWithEnum, FooEnum, ScroogeLikeExample}
 import org.apache.spark.sql.catalyst.encoders.{OuterScopes, RowEncoder}
 import org.apache.spark.sql.catalyst.plans.{LeftAnti, LeftSemi}
 import org.apache.spark.sql.catalyst.util.sideBySide
@@ -528,42 +528,42 @@ class DatasetSuite extends QueryTest
   test("groupBy function, map") {
     val ds = Seq(("a", 10), ("a", 20), ("b", 1), ("b", 2), ("c", 1)).toDS()
     val grouped = ds.groupByKey(v => (v._1, "word"))
-    val agged = grouped.mapGroups { (g, iter) => (g._1, iter.map(_._2).sum) }
+    val aggregated = grouped.mapGroups { (g, iter) => (g._1, iter.map(_._2).sum) }
 
     checkDatasetUnorderly(
-      agged,
+      aggregated,
       ("a", 30), ("b", 3), ("c", 1))
   }
 
   test("groupBy function, flatMap") {
     val ds = Seq(("a", 10), ("a", 20), ("b", 1), ("b", 2), ("c", 1)).toDS()
     val grouped = ds.groupByKey(v => (v._1, "word"))
-    val agged = grouped.flatMapGroups { (g, iter) =>
+    val aggregated = grouped.flatMapGroups { (g, iter) =>
       Iterator(g._1, iter.map(_._2).sum.toString)
     }
 
     checkDatasetUnorderly(
-      agged,
+      aggregated,
       "a", "30", "b", "3", "c", "1")
   }
 
   test("groupBy function, mapValues, flatMap") {
     val ds = Seq(("a", 10), ("a", 20), ("b", 1), ("b", 2), ("c", 1)).toDS()
     val keyValue = ds.groupByKey(_._1).mapValues(_._2)
-    val agged = keyValue.mapGroups { (g, iter) => (g, iter.sum) }
-    checkDataset(agged, ("a", 30), ("b", 3), ("c", 1))
+    val aggregated = keyValue.mapGroups { (g, iter) => (g, iter.sum) }
+    checkDataset(aggregated, ("a", 30), ("b", 3), ("c", 1))
 
     val keyValue1 = ds.groupByKey(t => (t._1, "key")).mapValues(t => (t._2, "value"))
-    val agged1 = keyValue1.mapGroups { (g, iter) => (g._1, iter.map(_._1).sum) }
-    checkDataset(agged1, ("a", 30), ("b", 3), ("c", 1))
+    val aggregated1 = keyValue1.mapGroups { (g, iter) => (g._1, iter.map(_._1).sum) }
+    checkDataset(aggregated1, ("a", 30), ("b", 3), ("c", 1))
   }
 
   test("groupBy function, reduce") {
     val ds = Seq("abc", "xyz", "hello").toDS()
-    val agged = ds.groupByKey(_.length).reduceGroups(_ + _)
+    val aggregated = ds.groupByKey(_.length).reduceGroups(_ + _)
 
     checkDatasetUnorderly(
-      agged,
+      aggregated,
       3 -> "abcxyz", 5 -> "hello")
   }
 
@@ -914,11 +914,11 @@ class DatasetSuite extends QueryTest
 
   test("grouping key and grouped value has field with same name") {
     val ds = Seq(ClassData("a", 1), ClassData("a", 2)).toDS()
-    val agged = ds.groupByKey(d => ClassNullableData(d.a, null)).mapGroups {
+    val aggregated = ds.groupByKey(d => ClassNullableData(d.a, null)).mapGroups {
       (key, values) => key.a + values.map(_.b).sum
     }
 
-    checkDataset(agged, "a3")
+    checkDataset(aggregated, "a3")
   }
 
   test("cogroup's left and right side has field with same name") {
@@ -1116,8 +1116,8 @@ class DatasetSuite extends QueryTest
       """+--------+
         ||       f|
         |+--------+
-        ||[foo, 1]|
-        ||[bar, 2]|
+        ||{foo, 1}|
+        ||{bar, 2}|
         |+--------+
         |""".stripMargin
 
@@ -1222,14 +1222,6 @@ class DatasetSuite extends QueryTest
     assert(result == Set(ClassData("a", 1) -> null, ClassData("b", 2) -> ClassData("x", 2)))
   }
 
-  test("better error message when use java reserved keyword as field name") {
-    val e = intercept[UnsupportedOperationException] {
-      Seq(InvalidInJava(1)).toDS()
-    }
-    assert(e.getMessage.contains(
-      "`abstract` is a reserved keyword and cannot be used as field name"))
-  }
-
   test("Dataset should support flat input object to be null") {
     checkDataset(Seq("a", null).toDS(), "a", null)
   }
@@ -1294,7 +1286,7 @@ class DatasetSuite extends QueryTest
       Route("b", "c", 6))
     val ds = sparkContext.parallelize(data).toDF.as[Route]
 
-    val grped = ds.map(r => GroupedRoutes(r.src, r.dest, Seq(r)))
+    val grouped = ds.map(r => GroupedRoutes(r.src, r.dest, Seq(r)))
       .groupByKey(r => (r.src, r.dest))
       .reduceGroups { (g1: GroupedRoutes, g2: GroupedRoutes) =>
         GroupedRoutes(g1.src, g1.dest, g1.routes ++ g2.routes)
@@ -1311,7 +1303,7 @@ class DatasetSuite extends QueryTest
     implicit def ordering[GroupedRoutes]: Ordering[GroupedRoutes] =
       (x: GroupedRoutes, y: GroupedRoutes) => x.toString.compareTo(y.toString)
 
-    checkDatasetUnorderly(grped, expected: _*)
+    checkDatasetUnorderly(grouped, expected: _*)
   }
 
   test("SPARK-18189: Fix serialization issue in KeyValueGroupedDataset") {
@@ -1391,7 +1383,7 @@ class DatasetSuite extends QueryTest
               }
             }
           } else {
-            // Local checkpoints dont require checkpoint_dir
+            // Local checkpoints don't require checkpoint_dir
             f
           }
         }
@@ -1482,7 +1474,7 @@ class DatasetSuite extends QueryTest
   }
 
   test("SPARK-18717: code generation works for both scala.collection.Map" +
-    " and scala.collection.imutable.Map") {
+    " and scala.collection.immutable.Map") {
     val ds = Seq(WithImmutableMap("hi", Map(42L -> "foo"))).toDS
     checkDataset(ds.map(t => t), WithImmutableMap("hi", Map(42L -> "foo")))
 
@@ -1924,6 +1916,45 @@ class DatasetSuite extends QueryTest
     assert(df1.semanticHash !== df3.semanticHash)
     assert(df3.semanticHash === df4.semanticHash)
   }
+
+  test("SPARK-31854: Invoke in MapElementsExec should not propagate null") {
+    Seq("true", "false").foreach { wholeStage =>
+      withSQLConf(SQLConf.WHOLESTAGE_CODEGEN_ENABLED.key -> wholeStage) {
+        val ds = Seq(1.asInstanceOf[Integer], null.asInstanceOf[Integer]).toDS()
+        val expectedAnswer = Seq[(Integer, Integer)]((1, 1), (null, null))
+        checkDataset(ds.map(v => (v, v)), expectedAnswer: _*)
+      }
+    }
+  }
+
+  test("SPARK-32585: Support scala enumeration in ScalaReflection") {
+    checkDataset(
+      Seq(FooClassWithEnum(1, FooEnum.E1), FooClassWithEnum(2, FooEnum.E2)).toDS(),
+      Seq(FooClassWithEnum(1, FooEnum.E1), FooClassWithEnum(2, FooEnum.E2)): _*
+    )
+
+    // test null
+    checkDataset(
+      Seq(FooClassWithEnum(1, null), FooClassWithEnum(2, FooEnum.E2)).toDS(),
+      Seq(FooClassWithEnum(1, null), FooClassWithEnum(2, FooEnum.E2)): _*
+    )
+  }
+
+  test("SPARK-33390: Make Literal support char array") {
+    val df = Seq("aa", "bb", "cc", "abc").toDF("zoo")
+    checkAnswer(df.where($"zoo" === Array('a', 'a')), Seq(Row("aa")))
+    checkAnswer(
+      df.where($"zoo".contains(Array('a', 'b'))),
+      Seq(Row("abc")))
+  }
+
+  test("SPARK-33469: Add current_timezone function") {
+    val df = Seq(1).toDF("c")
+    withSQLConf(SQLConf.SESSION_LOCAL_TIMEZONE.key -> "Asia/Shanghai") {
+      val timezone = df.selectExpr("current_timezone()").collect().head.getString(0)
+      assert(timezone == "Asia/Shanghai")
+    }
+  }
 }
 
 object AssertExecutionId {
@@ -1963,8 +1994,6 @@ case class ClassNullableData(a: String, b: Integer)
 
 case class NestedStruct(f: ClassData)
 case class DeepNestedStruct(f: NestedStruct)
-
-case class InvalidInJava(`abstract`: Int)
 
 /**
  * A class used to test serialization using encoders. This class throws exceptions when using
