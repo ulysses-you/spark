@@ -330,6 +330,14 @@ class DataSourceV2Strategy(session: SparkSession) extends Strategy with Predicat
       AlterTableDropPartitionExec(
         table, parts.asResolvedPartitionSpecs, ignoreIfNotExists) :: Nil
 
+    case AlterTableRecoverPartitions(_: ResolvedTable) =>
+      throw new AnalysisException(
+        "ALTER TABLE ... RECOVER PARTITIONS is not supported for v2 tables.")
+
+    case AlterTableSerDeProperties(_: ResolvedTable, _, _, _) =>
+      throw new AnalysisException(
+        "ALTER TABLE ... SET [SERDE|SERDEPROPERTIES] is not supported for v2 tables.")
+
     case LoadData(_: ResolvedTable, _, _, _, _) =>
       throw new AnalysisException("LOAD DATA is not supported for v2 tables.")
 
@@ -359,6 +367,9 @@ class DataSourceV2Strategy(session: SparkSession) extends Strategy with Predicat
 
     case r: CacheTableAsSelect =>
       CacheTableAsSelectExec(r.tempViewName, r.plan, r.isLazy, r.options) :: Nil
+
+    case r: UncacheTable =>
+      UncacheTableExec(r.table, cascade = !r.isTempView) :: Nil
 
     case _ => Nil
   }

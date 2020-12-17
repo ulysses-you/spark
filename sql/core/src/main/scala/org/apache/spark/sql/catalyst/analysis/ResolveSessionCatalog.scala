@@ -449,10 +449,9 @@ class ResolveSessionCatalog(
       }
       ShowColumnsCommand(db, v1TableName)
 
-    case AlterTableRecoverPartitionsStatement(tbl) =>
-      val v1TableName = parseV1Table(tbl, "ALTER TABLE RECOVER PARTITIONS")
+    case AlterTableRecoverPartitions(ResolvedV1TableIdentifier(ident)) =>
       AlterTableRecoverPartitionsCommand(
-        v1TableName.asTableIdentifier,
+        ident.asTableIdentifier,
         "ALTER TABLE RECOVER PARTITIONS")
 
     case AlterTableAddPartition(ResolvedV1TableIdentifier(ident), partSpecsAndLocs, ifNotExists) =>
@@ -477,10 +476,13 @@ class ResolveSessionCatalog(
         purge,
         retainData = false)
 
-    case AlterTableSerDePropertiesStatement(tbl, serdeClassName, serdeProperties, partitionSpec) =>
-      val v1TableName = parseV1Table(tbl, "ALTER TABLE SerDe Properties")
+    case AlterTableSerDeProperties(
+        ResolvedV1TableIdentifier(ident),
+        serdeClassName,
+        serdeProperties,
+        partitionSpec) =>
       AlterTableSerDePropertiesCommand(
-        v1TableName.asTableIdentifier,
+        ident.asTableIdentifier,
         serdeClassName,
         serdeProperties,
         partitionSpec)
