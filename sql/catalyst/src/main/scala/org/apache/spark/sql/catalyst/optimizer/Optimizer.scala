@@ -157,7 +157,8 @@ abstract class Optimizer(catalogManager: CatalogManager)
     //   since the other rules might make two separate Unions operators adjacent.
     Batch("Union", Once,
       RemoveNoopOperators,
-      CombineUnions) ::
+      CombineUnions,
+      RemoveNoopUnion) ::
     Batch("OptimizeLimitZero", Once,
       OptimizeLimitZero) ::
     // Run this once earlier. This might simplify the plan and reduce cost of optimizer.
@@ -351,11 +352,17 @@ abstract class Optimizer(catalogManager: CatalogManager)
  */
 object EliminateDistinct extends Rule[LogicalPlan] {
   override def apply(plan: LogicalPlan): LogicalPlan = plan transformExpressions  {
-    case ae: AggregateExpression if ae.isDistinct =>
-      ae.aggregateFunction match {
-        case _: Max | _: Min => ae.copy(isDistinct = false)
-        case _ => ae
-      }
+    case ae: AggregateExpression if ae.isDistinct && isDuplicateAgnostic(ae.aggregateFunction) =>
+      ae.copy(isDistinct = false)
+  }
+
+  private def isDuplicateAgnostic(af: AggregateFunction): Boolean = af match {
+    case _: Max => true
+    case _: Min => true
+    case _: BitAndAgg => true
+    case _: BitOrAgg => true
+    case _: CollectSet => true
+    case _ => false
   }
 }
 
@@ -498,6 +505,57 @@ object RemoveNoopOperators extends Rule[LogicalPlan] {
 
     // Eliminate no-op Window
     case w: Window if w.windowExpressions.isEmpty => w.child
+  }
+}
+
+/**
+ * Smplify the children of `Union` or remove no-op `Union` from the query plan that
+ * do not make any modifications to the query.
+ */
+object RemoveNoopUnion extends Rule[LogicalPlan] {
+  /**
+   * This only removes the `Project` that has only attributes or aliased attributes
+   * from its child.
+   */
+  private def removeAliasOnlyProject(plan: LogicalPlan): LogicalPlan = plan match {
+    case p @ Project(projectList, child) =>
+      val aliasOnly = projectList.length == child.output.length &&
+        projectList.zip(child.output).forall {
+          case (Alias(left: Attribute, _), right) => left.semanticEquals(right)
+          case (left: Attribute, right) => left.semanticEquals(right)
+          case _ => false
+        }
+      if (aliasOnly) {
+        child
+      } else {
+        p
+      }
+    case _ => plan
+  }
+
+  private def simplifyUnion(u: Union): LogicalPlan = {
+    val uniqueChildren = mutable.ArrayBuffer.empty[LogicalPlan]
+    val uniqueChildrenKey = mutable.HashSet.empty[LogicalPlan]
+
+    u.children.foreach { c =>
+      val key = removeAliasOnlyProject(c).canonicalized
+      if (!uniqueChildrenKey.contains(key)) {
+        uniqueChildren += c
+        uniqueChildrenKey += key
+      }
+    }
+    if (uniqueChildren.size == 1) {
+      u.children.head
+    } else {
+      u.copy(children = uniqueChildren.toSeq)
+    }
+  }
+
+  def apply(plan: LogicalPlan): LogicalPlan = plan transformUp {
+    case d @ Distinct(u: Union) =>
+      d.withNewChildren(Seq(simplifyUnion(u)))
+    case d @ Deduplicate(_, u: Union) =>
+      d.withNewChildren(Seq(simplifyUnion(u)))
   }
 }
 
