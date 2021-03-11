@@ -399,11 +399,11 @@ class ResolveSessionCatalog(val catalogManager: CatalogManager)
         isOverwrite,
         partition)
 
-    case ShowCreateTable(ResolvedV1TableOrViewIdentifier(ident), asSerde) =>
+    case ShowCreateTable(ResolvedV1TableOrViewIdentifier(ident), asSerde, output) =>
       if (asSerde) {
-        ShowCreateTableAsSerdeCommand(ident.asTableIdentifier)
+        ShowCreateTableAsSerdeCommand(ident.asTableIdentifier, output)
       } else {
-        ShowCreateTableCommand(ident.asTableIdentifier)
+        ShowCreateTableCommand(ident.asTableIdentifier, output)
       }
 
     case TruncateTable(ResolvedV1TableIdentifier(ident)) =>
@@ -474,7 +474,7 @@ class ResolveSessionCatalog(val catalogManager: CatalogManager)
     case SetTableLocation(ResolvedV1TableIdentifier(ident), partitionSpec, location) =>
       AlterTableSetLocationCommand(ident.asTableIdentifier, partitionSpec, location)
 
-    case AlterViewAs(ResolvedView(ident, _), originalText, query) =>
+    case AlterViewAs(ResolvedView(ident, _), originalText, query) if query.resolved =>
       AlterViewAsCommand(
         ident.asTableIdentifier,
         originalText,
