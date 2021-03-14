@@ -89,7 +89,7 @@ object SQLExecution {
 
       val globalConfigs = sparkSession.sharedState.conf.getAll.toMap
       val modifiedConfigs = sparkSession.sessionState.conf.getAllNonStaticConfs()
-        .filterNot(kv => globalConfigs.contains(kv._1))
+        .filterNot(kv => globalConfigs.get(kv._1).contains(kv._2))
 
       withSQLConfPropagated(sparkSession) {
         var ex: Option[Throwable] = None
