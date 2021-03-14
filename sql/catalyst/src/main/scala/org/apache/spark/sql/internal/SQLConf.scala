@@ -3988,7 +3988,7 @@ class SQLConf extends Serializable with Logging {
   }
 
   /**
-   * Return all static configuration
+   * Return all non-static configuration
    */
   def getAllNonStaticConfs(): Map[String, String] = {
     getAllConfs.filterNot { case (k, _) =>
