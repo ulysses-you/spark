@@ -89,6 +89,7 @@ class SQLAppStatusListener(
           executionData.description = sqlStoreData.description
           executionData.details = sqlStoreData.details
           executionData.physicalPlanDescription = sqlStoreData.physicalPlanDescription
+          executionData.modifiedConfigs = sqlStoreData.modifiedConfigs
           executionData.metrics = sqlStoreData.metrics
           executionData.submissionTime = sqlStoreData.submissionTime
           executionData.completionTime = sqlStoreData.completionTime
@@ -302,7 +303,7 @@ class SQLAppStatusListener(
 
   private def onExecutionStart(event: SparkListenerSQLExecutionStart): Unit = {
     val SparkListenerSQLExecutionStart(executionId, description, details,
-      physicalPlanDescription, sparkPlanInfo, time) = event
+      physicalPlanDescription, modifiedConfigs, sparkPlanInfo, time) = event
 
     val planGraph = SparkPlanGraph(sparkPlanInfo)
     val sqlPlanMetrics = planGraph.allNodes.flatMap { node =>
@@ -319,6 +320,7 @@ class SQLAppStatusListener(
     exec.description = description
     exec.details = details
     exec.physicalPlanDescription = physicalPlanDescription
+    exec.modifiedConfigs = modifiedConfigs
     exec.metrics = sqlPlanMetrics
     exec.submissionTime = time
     update(exec)
@@ -445,6 +447,7 @@ private class LiveExecutionData(val executionId: Long) extends LiveEntity {
   var description: String = null
   var details: String = null
   var physicalPlanDescription: String = null
+  var modifiedConfigs: Map[String, String] = _
   var metrics = Seq[SQLPlanMetric]()
   var submissionTime = -1L
   var completionTime: Option[Date] = None
@@ -465,6 +468,7 @@ private class LiveExecutionData(val executionId: Long) extends LiveEntity {
       description,
       details,
       physicalPlanDescription,
+      modifiedConfigs,
       metrics,
       submissionTime,
       completionTime,

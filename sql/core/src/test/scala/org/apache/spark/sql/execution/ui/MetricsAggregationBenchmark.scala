@@ -77,6 +77,7 @@ object MetricsAggregationBenchmark extends BenchmarkBase {
       getClass().getName(),
       getClass().getName(),
       getClass().getName(),
+      Map.empty,
       planInfo,
       System.currentTimeMillis())
 

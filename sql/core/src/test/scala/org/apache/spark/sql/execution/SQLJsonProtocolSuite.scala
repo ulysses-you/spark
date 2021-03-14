@@ -36,6 +36,9 @@ class SQLJsonProtocolSuite extends SparkFunSuite with LocalSparkSession {
         |  "description":"test desc",
         |  "details":"test detail",
         |  "physicalPlanDescription":"test plan",
+        |  "modifiedConfigs":{
+        |    "k1":"v1"
+        |  },
         |  "sparkPlanInfo": {
         |    "nodeName":"TestNode",
         |    "simpleString":"test string",
@@ -48,7 +51,7 @@ class SQLJsonProtocolSuite extends SparkFunSuite with LocalSparkSession {
       """.stripMargin
     val reconstructedEvent = JsonProtocol.sparkEventFromJson(parse(SQLExecutionStartJsonString))
     val expectedEvent = SparkListenerSQLExecutionStart(0, "test desc", "test detail", "test plan",
-      new SparkPlanInfo("TestNode", "test string", Nil, Map(), Nil), 0)
+      Map("k1" -> "v1"), new SparkPlanInfo("TestNode", "test string", Nil, Map(), Nil), 0)
     assert(reconstructedEvent == expectedEvent)
   }
 

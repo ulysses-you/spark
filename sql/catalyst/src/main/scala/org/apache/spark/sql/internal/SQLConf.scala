@@ -3986,4 +3986,13 @@ class SQLConf extends Serializable with Logging {
   def isModifiable(key: String): Boolean = {
     sqlConfEntries.containsKey(key) && !staticConfKeys.contains(key)
   }
+
+  /**
+   * Return all static configuration
+   */
+  def getAllNonStaticConfs(): Map[String, String] = {
+    getAllConfs.filterNot { case (k, _) =>
+      staticConfKeys.contains(k)
+    }
+  }
 }
