@@ -74,8 +74,6 @@ private[sql] class SharedState(
     (confClone, hadoopConfClone)
   }
 
-  private[sql] val globalConfigKey = conf.getAll.map(_._1)
-
   /**
    * Class for caching query results reused in future executions.
    */
