@@ -91,6 +91,7 @@ class ExecutionPage(parent: SQLTab) extends WebUIPage("execution") with Logging 
       request, s"Details for Query $executionId", content, parent)
   }
 
+
   private def planVisualizationResources(request: HttpServletRequest): Seq[Node] = {
     // scalastyle:off
     <link rel="stylesheet" href={UIUtils.prependBaseUri(request, "/static/sql/spark-sql-viz.css")} type="text/css"/>
