@@ -90,6 +90,7 @@ object SQLExecution {
       val globalConfigs = sparkSession.sharedState.conf.getAll.toMap
       val modifiedConfigs = sparkSession.sessionState.conf.getAllConfs
         .filterNot(kv => globalConfigs.get(kv._1).contains(kv._2))
+      val redactedConfigs = sparkSession.sessionState.conf.redactOptions(modifiedConfigs)
 
       withSQLConfPropagated(sparkSession) {
         var ex: Option[Throwable] = None
@@ -100,7 +101,7 @@ object SQLExecution {
             description = desc,
             details = callSite.longForm,
             physicalPlanDescription = queryExecution.explainString(planDescriptionMode),
-            modifiedConfigs,
+            redactedConfigs,
             // `queryExecution.executedPlan` triggers query planning. If it fails, the exception
             // will be caught and reported in the `SparkListenerSQLExecutionEnd`
             sparkPlanInfo = SparkPlanInfo.fromSparkPlan(queryExecution.executedPlan),
