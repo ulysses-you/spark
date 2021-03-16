@@ -31,6 +31,7 @@ import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.execution.ui.SparkListenerSQLExecutionStart
 import org.apache.spark.sql.types._
 import org.apache.spark.util.ThreadUtils
+import org.apache.spark.util.Utils.REDACTION_REPLACEMENT_TEXT
 
 class SQLExecutionSuite extends SparkFunSuite {
 
@@ -179,6 +180,8 @@ class SQLExecutionSuite extends SparkFunSuite {
             } else if (index.get() == 1 && hasProject(start)) {
               assert(start.modifiedConfigs.contains("k2"))
               assert(start.modifiedConfigs("k2") == "v2")
+              assert(start.modifiedConfigs.contains("redaction.password"))
+              assert(start.modifiedConfigs("redaction.password") == REDACTION_REPLACEMENT_TEXT)
               index.incrementAndGet()
             }
           case _ =>
@@ -189,6 +192,7 @@ class SQLExecutionSuite extends SparkFunSuite {
       })
       spark.sql("SELECT 1").collect()
       spark.sql("SET k2 = v2")
+      spark.sql("SET redaction.password = 123")
       spark.sql("SELECT 1").collect()
       spark.sparkContext.listenerBus.waitUntilEmpty()
       assert(index.get() == 2)
