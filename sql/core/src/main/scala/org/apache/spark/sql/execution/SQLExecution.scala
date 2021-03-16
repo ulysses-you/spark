@@ -88,7 +88,7 @@ object SQLExecution {
         ExplainMode.fromString(sparkSession.sessionState.conf.uiExplainMode)
 
       val globalConfigs = sparkSession.sharedState.conf.getAll.toMap
-      val modifiedConfigs = sparkSession.sessionState.conf.getAllNonStaticConfs()
+      val modifiedConfigs = sparkSession.sessionState.conf.getAllConfs
         .filterNot(kv => globalConfigs.get(kv._1).contains(kv._2))
 
       withSQLConfPropagated(sparkSession) {
