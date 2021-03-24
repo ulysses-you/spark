@@ -111,9 +111,9 @@ class AllExecutionsPageSuite extends SharedSparkSession with BeforeAndAfter {
         "test",
         "test",
         df.queryExecution.toString,
-        Map.empty,
         SparkPlanInfo.fromSparkPlan(df.queryExecution.executedPlan),
-        System.currentTimeMillis()))
+        System.currentTimeMillis(),
+        Map.empty))
       listener.onOtherEvent(SparkListenerSQLExecutionEnd(
         executionId, System.currentTimeMillis()))
       listener.onJobStart(SparkListenerJobStart(

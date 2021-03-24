@@ -303,7 +303,7 @@ class SQLAppStatusListener(
 
   private def onExecutionStart(event: SparkListenerSQLExecutionStart): Unit = {
     val SparkListenerSQLExecutionStart(executionId, description, details,
-      physicalPlanDescription, modifiedConfigs, sparkPlanInfo, time) = event
+      physicalPlanDescription, sparkPlanInfo, time, modifiedConfigs) = event
 
     val planGraph = SparkPlanGraph(sparkPlanInfo)
     val sqlPlanMetrics = planGraph.allNodes.flatMap { node =>

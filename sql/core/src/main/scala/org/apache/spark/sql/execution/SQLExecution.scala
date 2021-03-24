@@ -101,11 +101,11 @@ object SQLExecution {
             description = desc,
             details = callSite.longForm,
             physicalPlanDescription = queryExecution.explainString(planDescriptionMode),
-            redactedConfigs,
             // `queryExecution.executedPlan` triggers query planning. If it fails, the exception
             // will be caught and reported in the `SparkListenerSQLExecutionEnd`
             sparkPlanInfo = SparkPlanInfo.fromSparkPlan(queryExecution.executedPlan),
-            time = System.currentTimeMillis()))
+            time = System.currentTimeMillis(),
+            redactedConfigs))
           body
         } catch {
           case e: Throwable =>
