@@ -21,6 +21,7 @@ import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.{FunctionIdentifier, InternalRow, TableIdentifier}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.codegen.{CodegenContext, ExprCode}
+import org.apache.spark.sql.catalyst.parser.CatalystSqlParser
 import org.apache.spark.sql.catalyst.plans.logical.{LeafNode, LogicalPlan, UnaryNode}
 import org.apache.spark.sql.catalyst.util.quoteIfNeeded
 import org.apache.spark.sql.connector.catalog.{Identifier, TableCatalog}
@@ -174,7 +175,8 @@ object UnresolvedAttribute {
   /**
    * Creates an [[UnresolvedAttribute]], parsing segments separated by dots ('.').
    */
-  def apply(name: String): UnresolvedAttribute = new UnresolvedAttribute(name.split("\\."))
+  def apply(name: String): UnresolvedAttribute =
+    new UnresolvedAttribute(CatalystSqlParser.parseMultipartIdentifier(name))
 
   /**
    * Creates an [[UnresolvedAttribute]], from a single quoted string (for example using backticks in
@@ -538,6 +540,17 @@ case class UnresolvedDeserializer(deserializer: Expression, inputAttributes: Seq
 
 case class GetColumnByOrdinal(ordinal: Int, dataType: DataType) extends LeafExpression
   with Unevaluable with NonSQLExpression {
+  override def nullable: Boolean = throw new UnresolvedException("nullable")
+  override lazy val resolved = false
+}
+
+case class GetViewColumnByNameAndOrdinal(
+    viewName: String,
+    colName: String,
+    ordinal: Int,
+    expectedNumCandidates: Int)
+  extends LeafExpression with Unevaluable with NonSQLExpression {
+  override def dataType: DataType = throw new UnresolvedException("dataType")
   override def nullable: Boolean = throw new UnresolvedException("nullable")
   override lazy val resolved = false
 }
