@@ -15,20 +15,28 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.catalyst.optimizer
+package org.apache.spark.sql.connector.metric;
 
-import org.apache.spark.sql.catalyst.plans.logical.{Aggregate, LogicalPlan}
-import org.apache.spark.sql.catalyst.rules.Rule
+import org.apache.spark.annotation.Evolving;
+
+import java.util.Arrays;
+import java.text.DecimalFormat;
 
 /**
- * This rule ensures that [[Aggregate]] nodes contain all required [[GroupingExprRef]]
- * references for optimization phase.
+ * Built-in `CustomMetric` that computes average of metric values. Note that please extend this
+ * class and override `name` and `description` to create your custom metric for real usage.
+ *
+ * @since 3.2.0
  */
-object EnforceGroupingReferencesInAggregates extends Rule[LogicalPlan] {
-  override def apply(plan: LogicalPlan): LogicalPlan = {
-    plan transform {
-      case a: Aggregate =>
-        Aggregate.withGroupingRefs(a.groupingExpressions, a.aggregateExpressions, a.child)
+@Evolving
+public abstract class CustomAvgMetric implements CustomMetric {
+  @Override
+  public String aggregateTaskMetrics(long[] taskMetrics) {
+    if (taskMetrics.length > 0) {
+      double average = ((double)Arrays.stream(taskMetrics).sum()) / taskMetrics.length;
+      return new DecimalFormat("#0.000").format(average);
+    } else {
+      return "0";
     }
   }
 }
