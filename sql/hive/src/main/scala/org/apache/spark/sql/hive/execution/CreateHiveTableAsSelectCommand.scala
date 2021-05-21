@@ -57,6 +57,10 @@ trait CreateHiveTableAsSelectBase extends DataWritingCommand {
       command.run(sparkSession, child)
       DataWritingCommand.propogateMetrics(sparkSession.sparkContext, command, metrics)
     } else {
+        tableDesc.storage.locationUri.foreach { p =>
+          DataWritingCommand.assertEmptyRootPath(
+            p, mode, sparkSession.sparkContext.hadoopConfiguration)
+        }
       // TODO ideally, we should get the output data ready first and then
       // add the relation into catalog, just in case of failure occurs while data
       // processing.
@@ -130,6 +134,9 @@ case class CreateHiveTableAsSelectCommand(
 
   override def writingCommandClassName: String =
     Utils.getSimpleName(classOf[InsertIntoHiveTable])
+
+  override protected def withNewChildInternal(
+    newChild: LogicalPlan): CreateHiveTableAsSelectCommand = copy(query = newChild)
 }
 
 /**
@@ -177,4 +184,7 @@ case class OptimizedCreateHiveTableAsSelectCommand(
 
   override def writingCommandClassName: String =
     Utils.getSimpleName(classOf[InsertIntoHadoopFsRelationCommand])
+
+  override protected def withNewChildInternal(
+    newChild: LogicalPlan): OptimizedCreateHiveTableAsSelectCommand = copy(query = newChild)
 }

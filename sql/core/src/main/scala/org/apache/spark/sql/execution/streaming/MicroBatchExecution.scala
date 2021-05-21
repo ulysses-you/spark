@@ -28,7 +28,7 @@ import org.apache.spark.sql.catalyst.util.truncatedString
 import org.apache.spark.sql.connector.catalog.{SupportsRead, SupportsWrite, TableCapability}
 import org.apache.spark.sql.connector.read.streaming.{MicroBatchStream, Offset => OffsetV2, ReadLimit, SparkDataStream, SupportsAdmissionControl}
 import org.apache.spark.sql.execution.SQLExecution
-import org.apache.spark.sql.execution.datasources.v2.{StreamingDataSourceV2Relation, StreamWriterCommitProgress, WriteToDataSourceV2Exec}
+import org.apache.spark.sql.execution.datasources.v2.{DataSourceV2Relation, StreamingDataSourceV2Relation, StreamWriterCommitProgress, WriteToDataSourceV2Exec}
 import org.apache.spark.sql.execution.streaming.sources.WriteToMicroBatchDataSource
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.Trigger
@@ -41,7 +41,7 @@ class MicroBatchExecution(
     extraOptions: Map[String, String],
     plan: WriteToStream)
   extends StreamExecution(
-    sparkSession, plan.name, plan.checkpointLocation, plan.inputQuery, plan.sink, trigger,
+    sparkSession, plan.name, plan.resolvedCheckpointLocation, plan.inputQuery, plan.sink, trigger,
     triggerClock, plan.outputMode, plan.deleteCheckpointOnStop) {
 
   @volatile protected var sources: Seq[SparkDataStream] = Seq.empty
@@ -137,7 +137,10 @@ class MicroBatchExecution(
     sink match {
       case s: SupportsWrite =>
         val streamingWrite = createStreamingWrite(s, extraOptions, _logicalPlan)
-        WriteToMicroBatchDataSource(streamingWrite, _logicalPlan)
+        val relationOpt = plan.catalogAndIdent.map {
+          case (catalog, ident) => DataSourceV2Relation.create(s, Some(catalog), Some(ident))
+        }
+        WriteToMicroBatchDataSource(relationOpt, streamingWrite, _logicalPlan)
 
       case _ => _logicalPlan
     }
