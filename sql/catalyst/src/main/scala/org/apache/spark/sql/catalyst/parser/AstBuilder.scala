@@ -873,6 +873,9 @@ class AstBuilder extends SqlBaseBaseVisitor[AnyRef] with SQLConfHelper with Logg
       val right = plan(relation.relationPrimary)
       val join = right.optionalMap(left) { (left, right) =>
         if (relation.LATERAL != null) {
+          if (!relation.relationPrimary.isInstanceOf[AliasedQueryContext]) {
+            throw QueryParsingErrors.invalidLateralJoinRelationError(relation.relationPrimary)
+          }
           LateralJoin(left, LateralSubquery(right), Inner, None)
         } else {
           Join(left, right, Inner, None, JoinHint.NONE)
@@ -1128,6 +1131,10 @@ class AstBuilder extends SqlBaseBaseVisitor[AnyRef] with SQLConfHelper with Logg
           case jt if jt.LEFT != null => LeftOuter
           case jt if jt.RIGHT != null => RightOuter
           case _ => Inner
+        }
+
+        if (join.LATERAL != null && !join.right.isInstanceOf[AliasedQueryContext]) {
+          throw QueryParsingErrors.invalidLateralJoinRelationError(join.right)
         }
 
         // Resolve the join type and join condition
@@ -2514,8 +2521,13 @@ class AstBuilder extends SqlBaseBaseVisitor[AnyRef] with SQLConfHelper with Logg
   }
 
   override def visitYearMonthIntervalDataType(ctx: YearMonthIntervalDataTypeContext): DataType = {
-    // TODO(SPARK-35774): Parse any year-month interval types in SQL
-    YearMonthIntervalType()
+    val start = YearMonthIntervalType.stringToField(ctx.from.getText.toLowerCase(Locale.ROOT))
+    val end = if (ctx.to != null) {
+      YearMonthIntervalType.stringToField(ctx.to.getText.toLowerCase(Locale.ROOT))
+    } else {
+      start
+    }
+    YearMonthIntervalType(start, end)
   }
 
   override def visitDayTimeIntervalDataType(ctx: DayTimeIntervalDataTypeContext): DataType = {
