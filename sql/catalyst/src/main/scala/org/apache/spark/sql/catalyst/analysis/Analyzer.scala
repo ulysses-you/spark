@@ -261,7 +261,7 @@ class Analyzer(override val catalogManager: CatalogManager)
       AddMetadataColumns ::
       DeduplicateRelations ::
       ResolveReferences ::
-      ResolveCreateNamedStruct ::
+      ResolveExpressionsWithNamePlaceholders ::
       ResolveDeserializer ::
       ResolveNewInstance ::
       ResolveUpCast ::
@@ -386,8 +386,8 @@ class Analyzer(override val catalogManager: CatalogManager)
             DatetimeSub(l, r, DateAddInterval(l, UnaryMinus(r, f), ansiEnabled = f))
           case (_, CalendarIntervalType | _: DayTimeIntervalType) =>
             Cast(DatetimeSub(l, r, TimeAdd(l, UnaryMinus(r, f))), l.dataType)
-          case (TimestampType, _) => SubtractTimestamps(l, r)
-          case (_, TimestampType) => SubtractTimestamps(l, r)
+          case _ if AnyTimestampType.unapply(l) || AnyTimestampType.unapply(r) =>
+            SubtractTimestamps(l, r)
           case (_, DateType) => SubtractDates(l, r)
           case (DateType, dt) if dt != StringType => DateSub(l, r)
           case _ => s
@@ -3881,11 +3881,19 @@ object TimeWindowing extends Rule[LogicalPlan] {
 }
 
 /**
- * Resolve a [[CreateNamedStruct]] if it contains [[NamePlaceholder]]s.
+ * Resolve expressions if they contains [[NamePlaceholder]]s.
  */
-object ResolveCreateNamedStruct extends Rule[LogicalPlan] {
+object ResolveExpressionsWithNamePlaceholders extends Rule[LogicalPlan] {
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveExpressionsWithPruning(
-    _.containsPattern(CREATE_NAMED_STRUCT), ruleId) {
+    _.containsAnyPattern(ARRAYS_ZIP, CREATE_NAMED_STRUCT), ruleId) {
+    case e: ArraysZip if !e.resolved =>
+      val names = e.children.zip(e.names).map {
+        case (e: NamedExpression, NamePlaceholder) if e.resolved =>
+          Literal(e.name)
+        case (_, other) => other
+      }
+      ArraysZip(e.children, names)
+
     case e: CreateNamedStruct if !e.resolved =>
       val children = e.children.grouped(2).flatMap {
         case Seq(NamePlaceholder, e: NamedExpression) if e.resolved =>
