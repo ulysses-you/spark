@@ -120,6 +120,10 @@ class TestCasesUtils(object):
         return zip(self.psers, self.pssers)
 
     @property
+    def string_extension_dtype(self):
+        return ["string", StringDtype()] if extension_object_dtypes_available else []
+
+    @property
     def object_extension_dtypes(self):
         return (
             ["boolean", "string", BooleanDtype(), StringDtype()]
@@ -160,7 +164,7 @@ class TestCasesUtils(object):
             + self.integral_extension_dtypes
         )
 
-    def check_extension(self, psser, pser):
+    def check_extension(self, left, right):
         """
         Compare `psser` and `pser` of numeric ExtensionDtypes.
 
@@ -168,7 +172,8 @@ class TestCasesUtils(object):
         pandas versions. Please refer to https://github.com/pandas-dev/pandas/issues/39410.
         """
         if LooseVersion("1.1") <= LooseVersion(pd.__version__) < LooseVersion("1.2.2"):
-            self.assert_eq(psser, pser, check_exact=False)
-            self.assertTrue(isinstance(psser.dtype, extension_dtypes))
+            self.assert_eq(left, right, check_exact=False)
+            self.assertTrue(isinstance(left.dtype, extension_dtypes))
+            self.assertTrue(isinstance(right.dtype, extension_dtypes))
         else:
-            self.assert_eq(psser, pser)
+            self.assert_eq(left, right)
