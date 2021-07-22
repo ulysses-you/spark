@@ -65,6 +65,42 @@ class CategoricalTest(PandasOnSparkTestCase, TestUtils):
         self.assert_eq(psser.cat.codes, pser.cat.codes)
         self.assert_eq(psser.cat.ordered, pser.cat.ordered)
 
+    def test_categories_setter(self):
+        pdf, psdf = self.df_pair
+
+        pser = pdf.a
+        psser = psdf.a
+
+        pser.cat.categories = ["z", "y", "x"]
+        psser.cat.categories = ["z", "y", "x"]
+        self.assert_eq(pser, psser)
+        self.assert_eq(pdf, psdf)
+
+        with self.assertRaises(ValueError):
+            psser.cat.categories = [1, 2, 3, 4]
+
+    def test_as_ordered_unordered(self):
+        pdf, psdf = self.df_pair
+
+        pser = pdf.a
+        psser = psdf.a
+
+        # as_ordered
+        self.assert_eq(pser.cat.as_ordered(), psser.cat.as_ordered())
+
+        pser.cat.as_ordered(inplace=True)
+        psser.cat.as_ordered(inplace=True)
+        self.assert_eq(pser, psser)
+        self.assert_eq(pdf, psdf)
+
+        # as_unordered
+        self.assert_eq(pser.cat.as_unordered(), psser.cat.as_unordered())
+
+        pser.cat.as_unordered(inplace=True)
+        psser.cat.as_unordered(inplace=True)
+        self.assert_eq(pser, psser)
+        self.assert_eq(pdf, psdf)
+
     def test_astype(self):
         pser = pd.Series(["a", "b", "c"])
         psser = ps.from_pandas(pser)
