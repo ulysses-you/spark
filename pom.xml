@@ -704,12 +704,12 @@
       <dependency>
         <groupId>org.lz4</groupId>
         <artifactId>lz4-java</artifactId>
-        <version>1.7.1</version>
+        <version>1.8.0</version>
       </dependency>
       <dependency>
         <groupId>com.github.luben</groupId>
         <artifactId>zstd-jni</artifactId>
-        <version>1.5.0-2</version>
+        <version>1.5.0-4</version>
       </dependency>
       <dependency>
         <groupId>com.clearspring.analytics</groupId>
@@ -880,7 +880,7 @@
       <dependency>
         <groupId>org.scalanlp</groupId>
         <artifactId>breeze_${scala.binary.version}</artifactId>
-        <version>1.0</version>
+        <version>1.2</version>
         <exclusions>
           <exclusion>
             <groupId>org.apache.commons</groupId>
