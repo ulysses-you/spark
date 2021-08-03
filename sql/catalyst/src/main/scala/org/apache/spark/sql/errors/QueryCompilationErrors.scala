@@ -2261,8 +2261,8 @@ private[spark] object QueryCompilationErrors {
       s"""Cannot resolve column name "$colName" among (${fieldsStr})${extraMsg}""")
   }
 
-  def cannotParseTimeDelayError(delayThreshold: String, e: Throwable): Throwable = {
-    new AnalysisException(s"Unable to parse time delay '$delayThreshold'", cause = Some(e))
+  def cannotParseIntervalError(delayThreshold: String, e: Throwable): Throwable = {
+    new AnalysisException(s"Unable to parse '$delayThreshold'", cause = Some(e))
   }
 
   def invalidJoinTypeInJoinWithError(joinType: JoinType): Throwable = {
@@ -2352,12 +2352,12 @@ private[spark] object QueryCompilationErrors {
   }
 
   def missingFieldError(
-      fieldName: Seq[String], table: ResolvedTable, context: Expression): Throwable = {
+      fieldName: Seq[String], table: ResolvedTable, context: Origin): Throwable = {
     throw new AnalysisException(
       s"Missing field ${fieldName.quoted} in table ${table.name} with schema:\n" +
         table.schema.treeString,
-      context.origin.line,
-      context.origin.startPosition)
+      context.line,
+      context.startPosition)
   }
 
   def invalidFieldName(fieldName: Seq[String], path: Seq[String], context: Origin): Throwable = {

@@ -2393,12 +2393,12 @@ class HiveDDLSuite
     }
   }
 
-  test("SPARK-36241: support creating tables with null datatype") {
-    // CTAS with null type
+  test("SPARK-36241: support creating tables with void datatype") {
+    // CTAS with void type
     withTable("t1", "t2", "t3") {
       assertAnalysisError(
         "CREATE TABLE t1 USING PARQUET AS SELECT NULL AS null_col",
-        "Parquet data source does not support null data type")
+        "Parquet data source does not support void data type")
 
       assertAnalysisError(
         "CREATE TABLE t2 STORED AS PARQUET AS SELECT null as null_col",
@@ -2408,11 +2408,11 @@ class HiveDDLSuite
       checkAnswer(sql("SELECT * FROM t3"), Row(null))
     }
 
-    // Create table with null type
+    // Create table with void type
     withTable("t1", "t2", "t3", "t4") {
       assertAnalysisError(
         "CREATE TABLE t1 (v VOID) USING PARQUET",
-        "Parquet data source does not support null data type")
+        "Parquet data source does not support void data type")
 
       assertAnalysisError(
         "CREATE TABLE t2 (v VOID) STORED AS PARQUET",
@@ -2425,7 +2425,7 @@ class HiveDDLSuite
       checkAnswer(sql("SELECT * FROM t4"), Seq.empty)
     }
 
-    // Create table with null type using spark.catalog.createTable
+    // Create table with void type using spark.catalog.createTable
     withTable("t") {
       val schema = new StructType().add("c", NullType)
       spark.catalog.createTable(
@@ -2953,6 +2953,24 @@ class HiveDDLSuite
                |NAMED_STRUCT('ID', ID, 'IF(ID=1,ID,0)', IF(ID=1,ID,0), 'B', ABS(ID)) AS col1
                |FROM v
                """.stripMargin)
+        }.getMessage
+        assert(e.contains("Column name \"IF(ID=1,ID,0)\" contains" +
+          " invalid character(s). Please use alias to rename it."))
+      }
+    }
+  }
+
+  test("SPARK-36312: ParquetWriteSupport should check inner field") {
+    withView("v") {
+      spark.range(1).createTempView("v")
+      withTempPath { path =>
+        val e = intercept[AnalysisException] {
+          spark.sql(
+            """
+              |SELECT
+              |NAMED_STRUCT('ID', ID, 'IF(ID=1,ID,0)', IF(ID=1,ID,0), 'B', ABS(ID)) AS col1
+              |FROM v
+              |""".stripMargin).write.mode(SaveMode.Overwrite).parquet(path.toString)
         }.getMessage
         assert(e.contains("Column name \"IF(ID=1,ID,0)\" contains" +
           " invalid character(s). Please use alias to rename it."))
