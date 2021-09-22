@@ -914,9 +914,9 @@ object ArraySortLike {
 @ExpressionDescription(
   usage = """
     _FUNC_(array[, ascendingOrder]) - Sorts the input array in ascending or descending order
-      according to the natural ordering of the array elements. Null elements will be placed
-      at the beginning of the returned array in ascending order or at the end of the returned
-      array in descending order.
+      according to the natural ordering of the array elements. NaN is greater than any non-NaN
+      elements for double/float type. Null elements will be placed at the beginning of the returned
+      array in ascending order or at the end of the returned array in descending order.
   """,
   examples = """
     Examples:
@@ -1297,12 +1297,12 @@ case class ArraysOverlap(left: Expression, right: Expression)
       (arr2, arr1)
     }
     if (smaller.numElements() > 0) {
-      val smallestSet = new mutable.HashSet[Any]
+      val smallestSet = new java.util.HashSet[Any]()
       smaller.foreach(elementType, (_, v) =>
         if (v == null) {
           hasNull = true
         } else {
-          smallestSet += v
+          smallestSet.add(v)
         })
       bigger.foreach(elementType, (_, v1) =>
         if (v1 == null) {
@@ -1767,7 +1767,9 @@ case class ArrayJoin(
  * Returns the minimum value in the array.
  */
 @ExpressionDescription(
-  usage = "_FUNC_(array) - Returns the minimum value in the array. NULL elements are skipped.",
+  usage = """
+    _FUNC_(array) - Returns the minimum value in the array. NaN is greater than
+    any non-NaN elements for double/float type. NULL elements are skipped.""",
   examples = """
     Examples:
       > SELECT _FUNC_(array(1, 20, null, 3));
@@ -1838,7 +1840,9 @@ case class ArrayMin(child: Expression)
  * Returns the maximum value in the array.
  */
 @ExpressionDescription(
-  usage = "_FUNC_(array) - Returns the maximum value in the array. NULL elements are skipped.",
+  usage = """
+    _FUNC_(array) - Returns the maximum value in the array. NaN is greater than
+    any non-NaN elements for double/float type. NULL elements are skipped.""",
   examples = """
     Examples:
       > SELECT _FUNC_(array(1, 20, null, 3));
@@ -3336,7 +3340,9 @@ trait ArraySetLike {
   @transient protected lazy val nullValueHolder = et match {
     case ByteType => "(byte) 0"
     case ShortType => "(short) 0"
-    case LongType => "(long) 0"
+    case LongType => "0L"
+    case FloatType => "0.0f"
+    case DoubleType => "0.0"
     case _ => "0"
   }
 
@@ -3410,32 +3416,59 @@ case class ArrayDistinct(child: Expression)
   }
 
   override def nullSafeEval(array: Any): Any = {
-    val data = array.asInstanceOf[ArrayData].toArray[AnyRef](elementType)
+    val data = array.asInstanceOf[ArrayData]
     doEvaluation(data)
   }
 
   @transient private lazy val doEvaluation = if (TypeUtils.typeWithProperEquals(elementType)) {
-    (data: Array[AnyRef]) => new GenericArrayData(data.distinct.asInstanceOf[Array[Any]])
+    (array: ArrayData) =>
+      val arrayBuffer = new scala.collection.mutable.ArrayBuffer[Any]
+      val hs = new SQLOpenHashSet[Any]()
+      val withNaNCheckFunc = SQLOpenHashSet.withNaNCheckFunc(elementType, hs,
+        (value: Any) =>
+          if (!hs.contains(value)) {
+            if (arrayBuffer.size > ByteArrayMethods.MAX_ROUNDED_ARRAY_LENGTH) {
+              ArrayBinaryLike.throwUnionLengthOverflowException(arrayBuffer.size)
+            }
+            arrayBuffer += value
+            hs.add(value)
+          },
+        (valueNaN: Any) => arrayBuffer += valueNaN)
+      var i = 0
+      while (i < array.numElements()) {
+        if (array.isNullAt(i)) {
+          if (!hs.containsNull) {
+            hs.addNull
+            arrayBuffer += null
+          }
+        } else {
+          val elem = array.get(i, elementType)
+          withNaNCheckFunc(elem)
+        }
+        i += 1
+      }
+      new GenericArrayData(arrayBuffer.toSeq)
   } else {
-    (data: Array[AnyRef]) => {
+    (data: ArrayData) => {
+      val array = data.toArray[AnyRef](elementType)
       val arrayBuffer = new scala.collection.mutable.ArrayBuffer[AnyRef]
       var alreadyStoredNull = false
-      for (i <- 0 until data.length) {
-        if (data(i) != null) {
+      for (i <- 0 until array.length) {
+        if (array(i) != null) {
           var found = false
           var j = 0
           while (!found && j < arrayBuffer.size) {
             val va = arrayBuffer(j)
-            found = (va != null) && ordering.equiv(va, data(i))
+            found = (va != null) && ordering.equiv(va, array(i))
             j += 1
           }
           if (!found) {
-            arrayBuffer += data(i)
+            arrayBuffer += array(i)
           }
         } else {
           // De-duplicate the null values.
           if (!alreadyStoredNull) {
-            arrayBuffer += data(i)
+            arrayBuffer += array(i)
             alreadyStoredNull = true
           }
         }
@@ -3454,10 +3487,9 @@ case class ArrayDistinct(child: Expression)
       val ptName = CodeGenerator.primitiveTypeName(jt)
 
       nullSafeCodeGen(ctx, ev, (array) => {
-        val foundNullElement = ctx.freshName("foundNullElement")
         val nullElementIndex = ctx.freshName("nullElementIndex")
         val builder = ctx.freshName("builder")
-        val openHashSet = classOf[OpenHashSet[_]].getName
+        val openHashSet = classOf[SQLOpenHashSet[_]].getName
         val classTag = s"scala.reflect.ClassTag$$.MODULE$$.$hsTypeName()"
         val hashSet = ctx.freshName("hashSet")
         val arrayBuilder = classOf[mutable.ArrayBuilder[_]].getName
@@ -3466,7 +3498,6 @@ case class ArrayDistinct(child: Expression)
         // Only need to track null element index when array's element is nullable.
         val declareNullTrackVariables = if (dataType.asInstanceOf[ArrayType].containsNull) {
           s"""
-             |boolean $foundNullElement = false;
              |int $nullElementIndex = -1;
            """.stripMargin
         } else {
@@ -3477,9 +3508,9 @@ case class ArrayDistinct(child: Expression)
           if (dataType.asInstanceOf[ArrayType].containsNull) {
             s"""
                |if ($array.isNullAt($i)) {
-               |  if (!$foundNullElement) {
+               |  if (!$hashSet.containsNull()) {
                |    $nullElementIndex = $size;
-               |    $foundNullElement = true;
+               |    $hashSet.addNull();
                |    $size++;
                |    $builder.$$plus$$eq($nullValueHolder);
                |  }
@@ -3491,9 +3522,8 @@ case class ArrayDistinct(child: Expression)
             body
           }
 
-        val processArray = withArrayNullAssignment(
+        val body =
           s"""
-             |$jt $value = ${genGetValue(array, i)};
              |if (!$hashSet.contains($hsValueCast$value)) {
              |  if (++$size > ${ByteArrayMethods.MAX_ROUNDED_ARRAY_LENGTH}) {
              |    break;
@@ -3501,7 +3531,16 @@ case class ArrayDistinct(child: Expression)
              |  $hashSet.add$hsPostFix($hsValueCast$value);
              |  $builder.$$plus$$eq($value);
              |}
-           """.stripMargin)
+           """.stripMargin
+
+        val processArray = withArrayNullAssignment(
+          s"$jt $value = ${genGetValue(array, i)};" +
+            SQLOpenHashSet.withNaNCheckCode(elementType, value, hashSet, body,
+              (valueNaN: String) =>
+                s"""
+                   |$size++;
+                   |$builder.$$plus$$eq($valueNaN);
+                   |""".stripMargin))
 
         s"""
            |$openHashSet $hashSet = new $openHashSet$hsPostFix($classTag);
@@ -3577,7 +3616,16 @@ case class ArrayUnion(left: Expression, right: Expression) extends ArrayBinaryLi
       (array1, array2) =>
         val arrayBuffer = new scala.collection.mutable.ArrayBuffer[Any]
         val hs = new SQLOpenHashSet[Any]()
-        val isNaN = SQLOpenHashSet.isNaN(elementType)
+        val withNaNCheckFunc = SQLOpenHashSet.withNaNCheckFunc(elementType, hs,
+          (value: Any) =>
+            if (!hs.contains(value)) {
+              if (arrayBuffer.size > ByteArrayMethods.MAX_ROUNDED_ARRAY_LENGTH) {
+                ArrayBinaryLike.throwUnionLengthOverflowException(arrayBuffer.size)
+              }
+              arrayBuffer += value
+              hs.add(value)
+            },
+          (valueNaN: Any) => arrayBuffer += valueNaN)
         Seq(array1, array2).foreach { array =>
           var i = 0
           while (i < array.numElements()) {
@@ -3588,20 +3636,7 @@ case class ArrayUnion(left: Expression, right: Expression) extends ArrayBinaryLi
               }
             } else {
               val elem = array.get(i, elementType)
-              if (isNaN(elem)) {
-                if (!hs.containsNaN) {
-                  arrayBuffer += elem
-                  hs.addNaN
-                }
-              } else {
-                if (!hs.contains(elem)) {
-                  if (arrayBuffer.size > ByteArrayMethods.MAX_ROUNDED_ARRAY_LENGTH) {
-                    ArrayBinaryLike.throwUnionLengthOverflowException(arrayBuffer.size)
-                  }
-                  arrayBuffer += elem
-                  hs.add(elem)
-                }
-              }
+              withNaNCheckFunc(elem)
             }
             i += 1
           }
@@ -3686,26 +3721,6 @@ case class ArrayUnion(left: Expression, right: Expression) extends ArrayBinaryLi
             body
           }
 
-        def withNaNCheck(body: String): String = {
-          (elementType match {
-            case DoubleType => Some(s"java.lang.Double.isNaN((double)$value)")
-            case FloatType => Some(s"java.lang.Float.isNaN((float)$value)")
-            case _ => None
-          }).map { isNaN =>
-            s"""
-               |if ($isNaN) {
-               |  if (!$hashSet.containsNaN()) {
-               |     $size++;
-               |     $hashSet.addNaN();
-               |     $builder.$$plus$$eq($value);
-               |  }
-               |} else {
-               |  $body
-               |}
-             """.stripMargin
-          }
-        }.getOrElse(body)
-
         val body =
           s"""
              |if (!$hashSet.contains($hsValueCast$value)) {
@@ -3716,8 +3731,14 @@ case class ArrayUnion(left: Expression, right: Expression) extends ArrayBinaryLi
              |  $builder.$$plus$$eq($value);
              |}
            """.stripMargin
-        val processArray =
-          withArrayNullAssignment(s"$jt $value = ${genGetValue(array, i)};" + withNaNCheck(body))
+        val processArray = withArrayNullAssignment(
+          s"$jt $value = ${genGetValue(array, i)};" +
+            SQLOpenHashSet.withNaNCheckCode(elementType, value, hashSet, body,
+              (valueNaN: String) =>
+                s"""
+                   |$size++;
+                   |$builder.$$plus$$eq($valueNaN);
+                 """.stripMargin))
 
         // Only need to track null element index when result array's element is nullable.
         val declareNullTrackVariables = if (dataType.asInstanceOf[ArrayType].containsNull) {
@@ -3826,33 +3847,42 @@ case class ArrayIntersect(left: Expression, right: Expression) extends ArrayBina
     if (TypeUtils.typeWithProperEquals(elementType)) {
       (array1, array2) =>
         if (array1.numElements() != 0 && array2.numElements() != 0) {
-          val hs = new OpenHashSet[Any]
-          val hsResult = new OpenHashSet[Any]
-          var foundNullElement = false
+          val hs = new SQLOpenHashSet[Any]
+          val hsResult = new SQLOpenHashSet[Any]
+          val arrayBuffer = new scala.collection.mutable.ArrayBuffer[Any]
+          val withArray2NaNCheckFunc = SQLOpenHashSet.withNaNCheckFunc(elementType, hs,
+            (value: Any) => hs.add(value),
+            (valueNaN: Any) => {} )
+          val withArray1NaNCheckFunc = SQLOpenHashSet.withNaNCheckFunc(elementType, hsResult,
+            (value: Any) =>
+              if (hs.contains(value) && !hsResult.contains(value)) {
+                arrayBuffer += value
+                hsResult.add(value)
+              },
+            (valueNaN: Any) =>
+              if (hs.containsNaN()) {
+                arrayBuffer += valueNaN
+              })
           var i = 0
           while (i < array2.numElements()) {
             if (array2.isNullAt(i)) {
-              foundNullElement = true
+              hs.addNull()
             } else {
               val elem = array2.get(i, elementType)
-              hs.add(elem)
+              withArray2NaNCheckFunc(elem)
             }
             i += 1
           }
-          val arrayBuffer = new scala.collection.mutable.ArrayBuffer[Any]
           i = 0
           while (i < array1.numElements()) {
             if (array1.isNullAt(i)) {
-              if (foundNullElement) {
+              if (hs.containsNull() && !hsResult.containsNull()) {
                 arrayBuffer += null
-                foundNullElement = false
+                hsResult.addNull()
               }
             } else {
               val elem = array1.get(i, elementType)
-              if (hs.contains(elem) && !hsResult.contains(elem)) {
-                arrayBuffer += elem
-                hsResult.add(elem)
-              }
+              withArray1NaNCheckFunc(elem)
             }
             i += 1
           }
@@ -3927,10 +3957,9 @@ case class ArrayIntersect(left: Expression, right: Expression) extends ArrayBina
       val ptName = CodeGenerator.primitiveTypeName(jt)
 
       nullSafeCodeGen(ctx, ev, (array1, array2) => {
-        val foundNullElement = ctx.freshName("foundNullElement")
         val nullElementIndex = ctx.freshName("nullElementIndex")
         val builder = ctx.freshName("builder")
-        val openHashSet = classOf[OpenHashSet[_]].getName
+        val openHashSet = classOf[SQLOpenHashSet[_]].getName
         val classTag = s"scala.reflect.ClassTag$$.MODULE$$.$hsTypeName()"
         val hashSet = ctx.freshName("hashSet")
         val hashSetResult = ctx.freshName("hashSetResult")
@@ -3942,7 +3971,7 @@ case class ArrayIntersect(left: Expression, right: Expression) extends ArrayBina
             if (left.dataType.asInstanceOf[ArrayType].containsNull) {
               s"""
                  |if ($array2.isNullAt($i)) {
-                 |  $foundNullElement = true;
+                 |  $hashSet.addNull();
                  |} else {
                  |  $body
                  |}
@@ -3960,19 +3989,18 @@ case class ArrayIntersect(left: Expression, right: Expression) extends ArrayBina
           }
 
         val writeArray2ToHashSet = withArray2NullCheck(
-          s"""
-             |$jt $value = ${genGetValue(array2, i)};
-             |$hashSet.add$hsPostFix($hsValueCast$value);
-           """.stripMargin)
+        s"$jt $value = ${genGetValue(array2, i)};" +
+          SQLOpenHashSet.withNaNCheckCode(elementType, value, hashSet,
+            s"$hashSet.add$hsPostFix($hsValueCast$value);", (valueNaN: String) => ""))
 
         def withArray1NullAssignment(body: String) =
           if (left.dataType.asInstanceOf[ArrayType].containsNull) {
             if (right.dataType.asInstanceOf[ArrayType].containsNull) {
               s"""
                  |if ($array1.isNullAt($i)) {
-                 |  if ($foundNullElement) {
+                 |  if ($hashSet.containsNull() && !$hashSetResult.containsNull()) {
                  |    $nullElementIndex = $size;
-                 |    $foundNullElement = false;
+                 |    $hashSetResult.addNull();
                  |    $size++;
                  |    $builder.$$plus$$eq($nullValueHolder);
                  |  }
@@ -3991,9 +4019,8 @@ case class ArrayIntersect(left: Expression, right: Expression) extends ArrayBina
             body
           }
 
-        val processArray1 = withArray1NullAssignment(
+        val body =
           s"""
-             |$jt $value = ${genGetValue(array1, i)};
              |if ($hashSet.contains($hsValueCast$value) &&
              |    !$hashSetResult.contains($hsValueCast$value)) {
              |  if (++$size > ${ByteArrayMethods.MAX_ROUNDED_ARRAY_LENGTH}) {
@@ -4002,12 +4029,22 @@ case class ArrayIntersect(left: Expression, right: Expression) extends ArrayBina
              |  $hashSetResult.add$hsPostFix($hsValueCast$value);
              |  $builder.$$plus$$eq($value);
              |}
-           """.stripMargin)
+           """.stripMargin
+
+        val processArray1 = withArray1NullAssignment(
+          s"$jt $value = ${genGetValue(array1, i)};" +
+            SQLOpenHashSet.withNaNCheckCode(elementType, value, hashSetResult, body,
+              (valueNaN: Any) =>
+                s"""
+                   |if ($hashSet.containsNaN()) {
+                   |  ++$size;
+                   |  $builder.$$plus$$eq($valueNaN);
+                   |}
+                 """.stripMargin))
 
         // Only need to track null element index when result array's element is nullable.
         val declareNullTrackVariables = if (dataType.asInstanceOf[ArrayType].containsNull) {
           s"""
-             |boolean $foundNullElement = false;
              |int $nullElementIndex = -1;
            """.stripMargin
         } else {

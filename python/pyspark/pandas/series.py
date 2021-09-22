@@ -47,7 +47,7 @@ import numpy as np
 import pandas as pd
 from pandas.core.accessor import CachedAccessor
 from pandas.io.formats.printing import pprint_thing
-from pandas.api.types import is_list_like, is_hashable
+from pandas.api.types import is_list_like, is_hashable, CategoricalDtype
 from pandas.tseries.frequencies import DateOffset
 from pyspark.sql import functions as F, Column, DataFrame as SparkDataFrame
 from pyspark.sql.types import (
@@ -4098,7 +4098,11 @@ class Series(Frame, IndexOpsMixin, Generic[T]):
             pdf = sdf.limit(2).toPandas()
             length = len(pdf)
             if length == 1:
-                return pdf[internal.data_spark_column_names[0]].iloc[0]
+                val = pdf[internal.data_spark_column_names[0]].iloc[0]
+                if isinstance(self.dtype, CategoricalDtype):
+                    return self.dtype.categories[val]
+                else:
+                    return val
 
             item_string = name_like_string(item)
             sdf = sdf.withColumn(SPARK_DEFAULT_INDEX_NAME, SF.lit(str(item_string)))
@@ -4536,22 +4540,33 @@ class Series(Frame, IndexOpsMixin, Generic[T]):
         if not isinstance(other, Series):
             raise TypeError("'other' must be a Series")
 
-        combined = combine_frames(self._psdf, other._psdf, how="leftouter")
+        if same_anchor(self, other):
+            scol = (
+                F.when(other.spark.column.isNotNull(), other.spark.column)
+                .otherwise(self.spark.column)
+                .alias(self._psdf._internal.spark_column_name_for(self._column_label))
+            )
+            internal = self._psdf._internal.with_new_spark_column(
+                self._column_label, scol  # TODO: dtype?
+            )
+            self._psdf._update_internal_frame(internal)
+        else:
+            combined = combine_frames(self._psdf, other._psdf, how="leftouter")
 
-        this_scol = combined["this"]._internal.spark_column_for(self._column_label)
-        that_scol = combined["that"]._internal.spark_column_for(other._column_label)
+            this_scol = combined["this"]._internal.spark_column_for(self._column_label)
+            that_scol = combined["that"]._internal.spark_column_for(other._column_label)
 
-        scol = (
-            F.when(that_scol.isNotNull(), that_scol)
-            .otherwise(this_scol)
-            .alias(self._psdf._internal.spark_column_name_for(self._column_label))
-        )
+            scol = (
+                F.when(that_scol.isNotNull(), that_scol)
+                .otherwise(this_scol)
+                .alias(self._psdf._internal.spark_column_name_for(self._column_label))
+            )
 
-        internal = combined["this"]._internal.with_new_spark_column(
-            self._column_label, scol  # TODO: dtype?
-        )
+            internal = combined["this"]._internal.with_new_spark_column(
+                self._column_label, scol  # TODO: dtype?
+            )
 
-        self._psdf._update_internal_frame(internal.resolved_copy, requires_same_anchor=False)
+            self._psdf._update_internal_frame(internal.resolved_copy, requires_same_anchor=False)
 
     def where(self, cond: "Series", other: Any = np.nan) -> "Series":
         """
