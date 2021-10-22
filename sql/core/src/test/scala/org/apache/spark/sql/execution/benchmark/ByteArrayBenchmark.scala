@@ -20,7 +20,6 @@ package org.apache.spark.sql.execution.benchmark
 import scala.util.Random
 
 import org.apache.spark.benchmark.{Benchmark, BenchmarkBase}
-import org.apache.spark.unsafe.types.ByteArray
 
 /**
  * Benchmark to measure performance for byte array comparisons.
