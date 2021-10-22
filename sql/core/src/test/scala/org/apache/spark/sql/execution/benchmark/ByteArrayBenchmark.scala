@@ -34,6 +34,16 @@ import org.apache.spark.unsafe.types.ByteArray
  * }}}
  */
 object ByteArrayBenchmark extends BenchmarkBase {
+  def compareBinaryOld(x: Array[Byte], y: Array[Byte]): Int = {
+    val limit = if (x.length <= y.length) x.length else y.length
+    var i = 0
+    while (i < limit) {
+      val res = (x(i) & 0xff) - (y(i) & 0xff)
+      if (res != 0) return res
+      i += 1
+    }
+    x.length - y.length
+  }
 
   def byteArrayComparisons(iters: Long): Unit = {
     val chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -62,7 +72,7 @@ object ByteArrayBenchmark extends BenchmarkBase {
       for (_ <- 0L until iters) {
         var i = 0
         while (i < count) {
-          sum += ByteArray.compareBinary(data(i), data((i + 1) % count))
+          sum += compareBinaryOld(data(i), data((i + 1) % count))
           i += 1
         }
       }
