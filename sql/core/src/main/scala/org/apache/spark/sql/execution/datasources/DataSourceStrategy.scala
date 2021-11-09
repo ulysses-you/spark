@@ -213,7 +213,8 @@ object DataSourceAnalysis extends Rule[LogicalPlan] with CastSupport {
         mode,
         table,
         Some(t.location),
-        actualQuery.output.map(_.name))
+        actualQuery.output.map(_.name),
+        false)
 
       // For dynamic partition overwrite, we do not delete partition directories ahead.
       // We write to staging directories and move to final partition directories after writing

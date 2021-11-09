@@ -534,7 +534,8 @@ case class DataSource(
         }
         val resolved = cmd.copy(
           partitionColumns = resolvedPartCols,
-          outputColumnNames = outputColumnNames)
+          outputColumnNames = outputColumnNames,
+          outputOrderResolved = true)
         resolved.run(sparkSession, physicalPlan)
         DataWritingCommand.propogateMetrics(sparkSession.sparkContext, resolved, metrics)
         // Replace the schema with that of the DataFrame we just wrote out to avoid re-inferring

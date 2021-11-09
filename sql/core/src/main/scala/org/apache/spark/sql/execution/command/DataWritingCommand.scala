@@ -45,6 +45,11 @@ trait DataWritingCommand extends UnaryCommand {
 
   override final def child: LogicalPlan = query
 
+  /**
+   * resolved by V1Writes and V1HiveWrites
+   */
+  def outputOrderResolved: Boolean = true
+
   // Output column names of the analyzed input query plan.
   def outputColumnNames: Seq[String]
 

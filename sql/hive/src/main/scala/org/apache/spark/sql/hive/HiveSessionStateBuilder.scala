@@ -39,7 +39,7 @@ import org.apache.spark.sql.execution.datasources.v2.TableCapabilityCheck
 import org.apache.spark.sql.execution.streaming.ResolveWriteToStream
 import org.apache.spark.sql.hive.HiveShim.HiveFunctionWrapper
 import org.apache.spark.sql.hive.client.HiveClient
-import org.apache.spark.sql.hive.execution.PruneHiveTablePartitions
+import org.apache.spark.sql.hive.execution.{PruneHiveTablePartitions, V1HiveWrites}
 import org.apache.spark.sql.internal.{BaseSessionStateBuilder, SessionResourceLoader, SessionState, SparkUDFExpressionBuilder}
 import org.apache.spark.util.Utils
 
@@ -113,7 +113,7 @@ class HiveSessionStateBuilder(
   }
 
   override def customEarlyScanPushDownRules: Seq[Rule[LogicalPlan]] =
-    Seq(new PruneHiveTablePartitions(session))
+    V1HiveWrites :: new PruneHiveTablePartitions(session) :: Nil
 
   /**
    * Planner that takes into account Hive-specific strategies.

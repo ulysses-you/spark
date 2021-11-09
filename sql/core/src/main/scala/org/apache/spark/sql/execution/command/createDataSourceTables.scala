@@ -140,7 +140,8 @@ case class CreateDataSourceTableAsSelectCommand(
     table: CatalogTable,
     mode: SaveMode,
     query: LogicalPlan,
-    outputColumnNames: Seq[String])
+    outputColumnNames: Seq[String],
+    override val outputOrderResolved: Boolean = false)
   extends DataWritingCommand {
 
   override def run(sparkSession: SparkSession, child: SparkPlan): Seq[Row] = {

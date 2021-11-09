@@ -115,7 +115,8 @@ case class CreateHiveTableAsSelectCommand(
     tableDesc: CatalogTable,
     query: LogicalPlan,
     outputColumnNames: Seq[String],
-    mode: SaveMode)
+    mode: SaveMode,
+    override val outputOrderResolved: Boolean = false)
   extends CreateHiveTableAsSelectBase {
 
   override def getWritingCommand(
@@ -152,7 +153,8 @@ case class OptimizedCreateHiveTableAsSelectCommand(
     tableDesc: CatalogTable,
     query: LogicalPlan,
     outputColumnNames: Seq[String],
-    mode: SaveMode)
+    mode: SaveMode,
+    override val outputOrderResolved: Boolean = false)
   extends CreateHiveTableAsSelectBase {
 
   override def getWritingCommand(

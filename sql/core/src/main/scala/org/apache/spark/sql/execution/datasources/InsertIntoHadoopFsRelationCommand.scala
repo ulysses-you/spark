@@ -56,7 +56,8 @@ case class InsertIntoHadoopFsRelationCommand(
     mode: SaveMode,
     catalogTable: Option[CatalogTable],
     fileIndex: Option[FileIndex],
-    outputColumnNames: Seq[String])
+    outputColumnNames: Seq[String],
+    override val outputOrderResolved: Boolean = false)
   extends DataWritingCommand {
 
   private lazy val parameters = CaseInsensitiveMap(options)
@@ -181,6 +182,7 @@ case class InsertIntoHadoopFsRelationCommand(
             committerOutputPath.toString, customPartitionLocations, outputColumns),
           hadoopConf = hadoopConf,
           partitionColumns = partitionColumns,
+          staticPartitionColumns = partitionColumns.take(staticPartitions.size),
           bucketSpec = bucketSpec,
           statsTrackers = Seq(basicWriteJobStatsTracker(hadoopConf)),
           options = options)
