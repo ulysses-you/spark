@@ -15,24 +15,16 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.execution.python
+package org.apache.spark.tags;
 
-import org.apache.spark.api.python.PythonEvalType
-import org.apache.spark.sql.catalyst.expressions._
-import org.apache.spark.sql.execution.SparkPlan
+import org.scalatest.TagAnnotation;
 
-/**
- * A relation produced by applying a function that takes an iterator of pandas DataFrames
- * and outputs an iterator of pandas DataFrames.
- */
-case class MapInPandasExec(
-    func: Expression,
-    output: Seq[Attribute],
-    child: SparkPlan)
-  extends MapInBatchExec {
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
 
-  override protected val pythonEvalType: Int = PythonEvalType.SQL_MAP_PANDAS_ITER_UDF
-
-  override protected def withNewChildInternal(newChild: SparkPlan): MapInPandasExec =
-    copy(child = newChild)
-}
+@TagAnnotation
+@Retention(RetentionPolicy.RUNTIME)
+@Target({ElementType.METHOD, ElementType.TYPE})
+public @interface ExtendedLevelDBTest { }
