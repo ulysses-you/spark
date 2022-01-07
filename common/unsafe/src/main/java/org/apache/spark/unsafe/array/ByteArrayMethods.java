@@ -17,6 +17,8 @@
 
 package org.apache.spark.unsafe.array;
 
+import java.util.Arrays;
+
 import org.apache.spark.unsafe.Platform;
 
 public class ByteArrayMethods {
@@ -52,6 +54,27 @@ public class ByteArrayMethods {
   public static final int MAX_ROUNDED_ARRAY_LENGTH = Integer.MAX_VALUE - 15;
 
   private static final boolean unaligned = Platform.unaligned();
+  private static final boolean isJDK8 = System.getProperty("java.version").startsWith("1.8");
+
+  public static boolean arrayEquals(byte[] left, byte[] right) {
+    if (isJDK8) {
+      if (left == right) {
+        return true;
+      }
+      if (left == null || right == null) {
+        return false;
+      }
+      if (left.length != right.length) {
+        return false;
+      }
+
+      return arrayEquals(left, Platform.BYTE_ARRAY_OFFSET,
+              right, Platform.BYTE_ARRAY_OFFSET, left.length);
+    } else {
+      return Arrays.equals(left, right);
+    }
+  }
+
   /**
    * Optimized byte array equality check for byte arrays.
    * @return true if the arrays are equal, false otherwise
