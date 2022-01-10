@@ -44,6 +44,7 @@ import org.apache.spark.sql.types.{IntegerType, StructType}
 import org.apache.spark.sql.util.QueryExecutionListener
 import org.apache.spark.util.Utils
 
+
 class AdaptiveQueryExecSuite
   extends QueryTest
   with SharedSparkSession
