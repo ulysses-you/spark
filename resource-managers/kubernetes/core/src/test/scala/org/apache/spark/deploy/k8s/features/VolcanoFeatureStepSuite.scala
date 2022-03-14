@@ -18,7 +18,6 @@ package org.apache.spark.deploy.k8s.features
 
 import java.io.File
 
-import io.fabric8.kubernetes.api.model.{ContainerBuilder, PodBuilder}
 import io.fabric8.volcano.scheduling.v1beta1.PodGroup
 
 import org.apache.spark.{SparkConf, SparkFunSuite}
@@ -50,25 +49,6 @@ class VolcanoFeatureStepSuite extends SparkFunSuite {
     assert(annotations.get("scheduling.k8s.io/group-name") === s"${kubernetesConf.appId}-podgroup")
   }
 
-  test("SPARK-38423: Support priorityClassName") {
-    // test null priority
-    val podWithNullPriority = SparkPod.initialPod()
-    assert(podWithNullPriority.pod.getSpec.getPriorityClassName === null)
-    verifyPriority(SparkPod.initialPod())
-    // test normal priority
-    val podWithPriority = SparkPod(
-      new PodBuilder()
-        .withNewMetadata()
-        .endMetadata()
-        .withNewSpec()
-          .withPriorityClassName("priority")
-        .endSpec()
-        .build(),
-      new ContainerBuilder().build())
-    assert(podWithPriority.pod.getSpec.getPriorityClassName === "priority")
-    verifyPriority(podWithPriority)
-  }
-
   test("SPARK-38455: Support driver podgroup template") {
     val templatePath = new File(
       getClass.getResource("/driver-podgroup-template.yml").getFile).getAbsolutePath
@@ -85,15 +65,5 @@ class VolcanoFeatureStepSuite extends SparkFunSuite {
     assert(podGroup.getSpec.getMinResources.get("memory").getFormat == "Mi")
     assert(podGroup.getSpec.getPriorityClassName == "driver-priority")
     assert(podGroup.getSpec.getQueue == "driver-queue")
-  }
-
-  private def verifyPriority(pod: SparkPod): Unit = {
-    val sparkConf = new SparkConf()
-    val kubernetesConf = KubernetesTestConf.createDriverConf(sparkConf)
-    val step = new VolcanoFeatureStep()
-    step.init(kubernetesConf)
-    val sparkPod = step.configurePod(pod)
-    val podGroup = step.getAdditionalPreKubernetesResources().head.asInstanceOf[PodGroup]
-    assert(podGroup.getSpec.getPriorityClassName === sparkPod.pod.getSpec.getPriorityClassName)
   }
 }
