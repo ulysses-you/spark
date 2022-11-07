@@ -36,7 +36,7 @@ object AQEPropagateEmptyRelation extends PropagateEmptyRelationBase {
   override protected def isEmpty(plan: LogicalPlan): Boolean =
     super.isEmpty(plan) || (!isRootRepartition(plan) && getEstimatedRowCount(plan).contains(0))
 
-  override protected def nonEmpty(plan: LogicalPlan): Boolean =
+  override def nonEmpty(plan: LogicalPlan): Boolean =
     super.nonEmpty(plan) || getEstimatedRowCount(plan).exists(_ > 0)
 
   private def isRootRepartition(plan: LogicalPlan): Boolean = plan match {

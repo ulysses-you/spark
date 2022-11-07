@@ -674,6 +674,22 @@ case class RangeExec(range: org.apache.spark.sql.catalyst.plans.logical.Range)
 }
 
 /**
+ * Physical plan for [[NonEmpty]], caller side should use `executeTake`.
+ */
+case class NonEmptyExec(child: SparkPlan, output: Seq[Attribute]) extends UnaryExecNode {
+  override def producedAttributes: AttributeSet = AttributeSet(output)
+
+  override protected def doExecute(): RDD[InternalRow] =
+    throw new UnsupportedOperationException()
+
+  override def executeTake(n: Int): Array[InternalRow] =
+    Array(InternalRow.fromSeq(child.executeTake(1).nonEmpty :: Nil))
+
+  override protected def withNewChildInternal(newChild: SparkPlan): SparkPlan =
+    copy(child = newChild)
+}
+
+/**
  * Physical plan for unioning two plans, without a distinct. This is UNION ALL in SQL.
  *
  * If we change how this is implemented physically, we'd need to update

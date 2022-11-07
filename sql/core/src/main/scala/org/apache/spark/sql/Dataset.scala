@@ -623,9 +623,10 @@ class Dataset[T] private[sql](
    * @group basic
    * @since 2.4.0
    */
-  def isEmpty: Boolean = withAction("isEmpty", select().queryExecution) { plan =>
-    plan.executeTake(1).isEmpty
-  }
+  def isEmpty: Boolean = withAction("isEmpty",
+    withPlan(NonEmpty(Project(Seq.empty, logicalPlan))).queryExecution) { plan =>
+      !plan.executeTake(1).head.getBoolean(0)
+    }
 
   /**
    * Returns true if this Dataset contains one or more sources that continuously

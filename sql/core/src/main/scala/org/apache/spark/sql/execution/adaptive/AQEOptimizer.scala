@@ -21,6 +21,7 @@ import org.apache.spark.sql.catalyst.analysis.UpdateAttributeNullability
 import org.apache.spark.sql.catalyst.optimizer.{ConvertToLocalRelation, EliminateLimits, OptimizeOneRowPlan}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, LogicalPlanIntegrity, PlanHelper}
 import org.apache.spark.sql.catalyst.rules.{Rule, RuleExecutor}
+import org.apache.spark.sql.execution.OptimizeNonEmpty
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.DataType
 import org.apache.spark.util.Utils
@@ -43,7 +44,8 @@ class AQEOptimizer(conf: SQLConf, extendedRuntimeOptimizerRules: Seq[Rule[Logica
       UpdateAttributeNullability),
     Batch("Dynamic Join Selection", Once, DynamicJoinSelection),
     Batch("Eliminate Limits", fixedPoint, EliminateLimits),
-    Batch("Optimize One Row Plan", fixedPoint, OptimizeOneRowPlan)) :+
+    Batch("Optimize One Row Plan", fixedPoint, OptimizeOneRowPlan),
+    Batch("Optimize Non Empty", Once, OptimizeNonEmpty)) :+
     Batch("User Provided Runtime Optimizers", fixedPoint, extendedRuntimeOptimizerRules: _*)
 
   final override protected def batches: Seq[Batch] = {

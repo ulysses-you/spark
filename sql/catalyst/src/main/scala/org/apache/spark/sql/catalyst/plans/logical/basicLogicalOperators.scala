@@ -1613,6 +1613,17 @@ case class Tail(limitExpr: Expression, child: LogicalPlan) extends OrderPreservi
 }
 
 /**
+ * A special node for `Dataset.isEmpty` and can only be a root node.
+ */
+case class NonEmpty(child: LogicalPlan) extends UnaryNode {
+  override def maxRows: Option[Long] = Some(1L)
+  override def output: Seq[Attribute] =
+    AttributeReference("nonEmpty", BooleanType, nullable = false)() :: Nil
+  override protected def withNewChildInternal(newChild: LogicalPlan): LogicalPlan =
+    copy(child = newChild)
+}
+
+/**
  * Aliased subquery.
  *
  * @param identifier the alias identifier for this subquery.
