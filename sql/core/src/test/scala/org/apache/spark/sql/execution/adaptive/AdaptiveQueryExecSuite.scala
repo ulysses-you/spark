@@ -3047,7 +3047,7 @@ class AdaptiveQueryExecSuite
     checkAnswer(unionDF.select("id").distinct(), Seq(Row(null)))
   }
 
-  test("Collect twice on the same dataframe with no AQE plan changes") {
+  test("SPARK-51008: Collect twice on the same dataframe with no AQE plan changes") {
     val df = spark.sql("SELECT * FROM testData join testData2 ON key = a")
     df.collect()
     val plan1 = df.queryExecution.executedPlan.asInstanceOf[AdaptiveSparkPlanExec].executedPlan
@@ -3058,9 +3058,11 @@ class AdaptiveQueryExecSuite
     assert(plan1 ne plan2)
     assert(plan1.asInstanceOf[ResultQueryStageExec].plan
       .fastEquals(plan2.asInstanceOf[ResultQueryStageExec].plan))
+    assert(plan1.asInstanceOf[ResultQueryStageExec].computeStats().isEmpty)
+    assert(plan2.asInstanceOf[ResultQueryStageExec].computeStats().isEmpty)
   }
 
-  test("Two different collect actions on same dataframe") {
+  test("SPARK-51008: Two different collect actions on same dataframe") {
     val df = spark.sql("SELECT * FROM testData join testData2 ON key = a")
     val adaptivePlan = df.queryExecution.executedPlan.asInstanceOf[AdaptiveSparkPlanExec]
     val res1 = adaptivePlan.execute().collect()
@@ -3073,6 +3075,8 @@ class AdaptiveQueryExecSuite
     assert(plan1 ne plan2)
     assert(plan1.asInstanceOf[ResultQueryStageExec].plan
       .fastEquals(plan2.asInstanceOf[ResultQueryStageExec].plan))
+    assert(plan1.asInstanceOf[ResultQueryStageExec].computeStats().isEmpty)
+    assert(plan2.asInstanceOf[ResultQueryStageExec].computeStats().isEmpty)
   }
 
   test("SPARK-47247: coalesce differently for BNLJ") {
