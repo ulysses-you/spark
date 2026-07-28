@@ -1,0 +1,37 @@
+================================================================================================
+Partial WindowGroupLimit: sort-based vs hash-based (ROW_NUMBER)
+================================================================================================
+
+OpenJDK 64-Bit Server VM 25.0.4+7-LTS on Linux 6.17.0-1020-azure
+AMD EPYC 7763 64-Core Processor
+ROW_NUMBER top-k, HASH, few groups (limit filters):  Best Time(ms)   Avg Time(ms)   Stdev(ms)    Rate(M/s)   Per Row(ns)   Relative
+----------------------------------------------------------------------------------------------------------------------------------
+WindowGroupLimit off                                         9022           9095          95          2.3         430.2       1.0X
+sort-based partial                                           3158           3199          35          6.6         150.6       2.9X
+hash-based partial                                           2046           2056          14         10.3          97.6       4.4X
+
+OpenJDK 64-Bit Server VM 25.0.4+7-LTS on Linux 6.17.0-1020-azure
+AMD EPYC 7763 64-Core Processor
+ROW_NUMBER top-k, HASH, many groups (limit filters):  Best Time(ms)   Avg Time(ms)   Stdev(ms)    Rate(M/s)   Per Row(ns)   Relative
+-----------------------------------------------------------------------------------------------------------------------------------
+WindowGroupLimit off                                          8385           8649         149          2.5         399.8       1.0X
+sort-based partial                                            4163           4194          20          5.0         198.5       2.0X
+hash-based partial                                            3098           3122          20          6.8         147.7       2.7X
+
+OpenJDK 64-Bit Server VM 25.0.4+7-LTS on Linux 6.17.0-1020-azure
+AMD EPYC 7763 64-Core Processor
+ROW_NUMBER top-k, PASS_THROUGH (limit ineffective):  Best Time(ms)   Avg Time(ms)   Stdev(ms)    Rate(M/s)   Per Row(ns)   Relative
+----------------------------------------------------------------------------------------------------------------------------------
+WindowGroupLimit off                                        10297          10540         144          2.0         491.0       1.0X
+sort-based partial                                          16471          16512          51          1.3         785.4       0.6X
+hash-based partial                                          13489          13525          38          1.6         643.2       0.8X
+
+OpenJDK 64-Bit Server VM 25.0.4+7-LTS on Linux 6.17.0-1020-azure
+AMD EPYC 7763 64-Core Processor
+ROW_NUMBER top-k, SORT_FALLBACK (buffers outgrow memory):  Best Time(ms)   Avg Time(ms)   Stdev(ms)    Rate(M/s)   Per Row(ns)   Relative
+----------------------------------------------------------------------------------------------------------------------------------------
+WindowGroupLimit off                                               8598           8648          41          2.4         410.0       1.0X
+sort-based partial                                                 4005           4131         111          5.2         191.0       2.1X
+hash-based partial                                                 4331           4379          30          4.8         206.5       2.0X
+
+

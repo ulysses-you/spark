@@ -27,7 +27,7 @@ import org.apache.spark.sql.catalyst.plans.physical.HashPartitioning
 import org.apache.spark.sql.catalyst.trees.UnaryLike
 import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanHelper
 import org.apache.spark.sql.execution.exchange.{ENSURE_REQUIREMENTS, Exchange, ShuffleExchangeExec}
-import org.apache.spark.sql.execution.window.WindowExec
+import org.apache.spark.sql.execution.window.{HashWindowGroupLimitExec, WindowExec, WindowGroupLimitExec}
 import org.apache.spark.sql.expressions.{Aggregator, MutableAggregationBuffer, UserDefinedAggregateFunction, Window}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
@@ -1679,6 +1679,207 @@ class DataFrameWindowFunctionsSuite extends SharedSparkSession
           }
         }
       }
+    }
+  }
+
+  test("SPARK-58324: hash-based partial window group limit for row_number") {
+    val nullStr: String = null
+    val df = Seq(
+      ("a", 0, "c", 1.0),
+      ("a", 1, "x", 2.0),
+      ("a", 2, "y", 3.0),
+      ("a", 3, "z", -1.0),
+      ("a", 4, "", 2.0),
+      ("a", 4, "", 2.0),
+      ("b", 1, "h", Double.NaN),
+      ("b", 1, "n", Double.PositiveInfinity),
+      ("c", 1, "z", -2.0),
+      ("c", 1, "a", -4.0),
+      ("c", 2, nullStr, 5.0),
+      ("d", 0, "1", 1.0),
+      ("d", 1, "1", 2.0),
+      ("d", 2, "2", 3.0),
+      ("d", 3, "2", -1.0),
+      ("d", 4, "2", 2.0),
+      ("d", 4, "3", 2.0)).toDF("key", "value", "order", "value2")
+
+    val window = Window.partitionBy($"key").orderBy($"order".asc_nulls_first)
+    val window3 = Window.orderBy($"order".asc_nulls_first)
+
+    // Force the partial `WindowGroupLimit` to be inserted regardless of stats.
+    withSQLConf(SQLConf.WINDOW_GROUP_LIMIT_THRESHOLD.key -> "1000") {
+      Seq(true, false).foreach { enableEvaluator =>
+        // Exercise all three runtime states of the hash-based partial:
+        //   - normal HASH path (default configs),
+        //   - forced PASS_THROUGH (ratio 0 + tiny sample: every task passes through),
+        //   - forced SORT_FALLBACK (threshold 1: every task falls back to the sorted path).
+        // The disabled case (sort-based partial) is the oracle the others must match.
+        val configs = Seq(
+          Seq(SQLConf.WINDOW_GROUP_LIMIT_HASH_BASED_PARTIAL_ENABLED.key -> "false"),
+          Seq(SQLConf.WINDOW_GROUP_LIMIT_HASH_BASED_PARTIAL_ENABLED.key -> "true"),
+          Seq(SQLConf.WINDOW_GROUP_LIMIT_HASH_BASED_PARTIAL_ENABLED.key -> "true",
+            SQLConf.WINDOW_GROUP_LIMIT_HASH_BASED_PARTIAL_PASS_THROUGH_RATIO.key -> "0.0",
+            SQLConf.WINDOW_GROUP_LIMIT_HASH_BASED_PARTIAL_PASS_THROUGH_SAMPLE_ROWS.key -> "1"),
+          Seq(SQLConf.WINDOW_GROUP_LIMIT_HASH_BASED_PARTIAL_ENABLED.key -> "true",
+            SQLConf.WINDOW_GROUP_LIMIT_HASH_BASED_PARTIAL_FALLBACK_MEMORY_THRESHOLD.key -> "1"))
+
+        configs.foreach { extraConf =>
+          withSQLConf(
+            (SQLConf.USE_PARTITION_EVALUATOR.key -> enableEvaluator.toString) +: extraConf: _*) {
+            Seq($"rn" === 1, $"rn" < 2, $"rn" <= 1).foreach { condition =>
+              checkAnswer(df.withColumn("rn", row_number().over(window)).where(condition),
+                Seq(
+                  Row("a", 4, "", 2.0, 1),
+                  Row("b", 1, "h", Double.NaN, 1),
+                  Row("c", 2, null, 5.0, 1),
+                  Row("d", 0, "1", 1.0, 1)
+                )
+              )
+
+              checkAnswer(df.withColumn("rn", row_number().over(window3)).where(condition),
+                Seq(
+                  Row("c", 2, null, 5.0, 1)
+                )
+              )
+            }
+
+            // Exercise a larger per-group buffer (limit 2). row_number can assign either rank to
+            // tied rows, so drop `rn` and compare only the set of surviving rows.
+            checkAnswer(
+              df.withColumn("rn", row_number().over(window)).where($"rn" <= 2).drop("rn"),
+              Seq(
+                Row("a", 4, "", 2.0),
+                Row("a", 4, "", 2.0),
+                Row("b", 1, "h", Double.NaN),
+                Row("b", 1, "n", Double.PositiveInfinity),
+                Row("c", 2, null, 5.0),
+                Row("c", 1, "a", -4.0),
+                Row("d", 0, "1", 1.0),
+                Row("d", 1, "1", 2.0)
+              )
+            )
+          }
+        }
+      }
+    }
+  }
+
+  test("SPARK-58324: hash-based partial window group limit adaptive states engage") {
+    def hashPartialMetric(df: DataFrame, name: String): Long = {
+      df.collect()
+      val plan = stripAQEPlan(df.queryExecution.executedPlan)
+      val nodes = collectWithSubqueries(plan) {
+        case e: HashWindowGroupLimitExec => e
+      }
+      assert(nodes.length == 1, s"expected exactly one HashWindowGroupLimitExec, got $nodes")
+      nodes.head.metrics(name).value
+    }
+
+    withSQLConf(
+      SQLConf.WINDOW_GROUP_LIMIT_THRESHOLD.key -> "1000",
+      SQLConf.ADAPTIVE_EXECUTION_ENABLED.key -> "false",
+      SQLConf.WINDOW_GROUP_LIMIT_HASH_BASED_PARTIAL_ENABLED.key -> "true") {
+      // SORT_FALLBACK: a fallback memory threshold of one byte makes the first buffered row's
+      // memory acquire exceed the cap, so every task dumps into the sort-based path.
+      withSQLConf(
+        SQLConf.WINDOW_GROUP_LIMIT_HASH_BASED_PARTIAL_FALLBACK_MEMORY_THRESHOLD.key -> "1") {
+        val df = spark.range(0, 100).repartition(1)
+          .selectExpr("id", "id % 7 AS key", "id AS order")
+          .withColumn("rn", row_number().over(
+            Window.partitionBy($"key").orderBy($"order")))
+          .where($"rn" <= 2)
+        assert(hashPartialMetric(df, "numFallbackTasks") > 0)
+      }
+
+      // PASS_THROUGH: every group holds a single row, so the cumulative survival ratio stays at
+      // 1.0. With a small sample size the checkpoint sees a ratio above the threshold and stops
+      // filtering.
+      withSQLConf(
+        SQLConf.WINDOW_GROUP_LIMIT_HASH_BASED_PARTIAL_PASS_THROUGH_RATIO.key -> "0.9",
+        SQLConf.WINDOW_GROUP_LIMIT_HASH_BASED_PARTIAL_PASS_THROUGH_SAMPLE_ROWS.key -> "5") {
+        val df = spark.range(0, 100).repartition(1)
+          .selectExpr("id", "id AS key", "id AS order")
+          .withColumn("rn", row_number().over(
+            Window.partitionBy($"key").orderBy($"order")))
+          .where($"rn" <= 2)
+        assert(hashPartialMetric(df, "numPassThroughTasks") > 0)
+      }
+    }
+  }
+
+  test("SPARK-58324: hash-based partial is not used for non-binary-stable partition keys") {
+    // A collated string is not binary stable: logically equal keys can differ byte-wise, so the
+    // hash-based partial (which buckets by `UnsafeRow` binary equality) must not be used. The
+    // strategy falls back to the sort-based partial, which groups via a collation-aware ordering.
+    withSQLConf(
+      SQLConf.WINDOW_GROUP_LIMIT_THRESHOLD.key -> "1000",
+      SQLConf.ADAPTIVE_EXECUTION_ENABLED.key -> "false",
+      SQLConf.WINDOW_GROUP_LIMIT_HASH_BASED_PARTIAL_ENABLED.key -> "true") {
+      val df = Seq(("a", 1), ("A", 2), ("a", 3), ("A", 4), ("b", 5))
+        .toDF("key", "order")
+        .withColumn("key", $"key".cast("string collate UTF8_LCASE"))
+        .withColumn("rn", row_number().over(
+          Window.partitionBy($"key").orderBy($"order")))
+        .where($"rn" <= 1)
+
+      val plan = stripAQEPlan(df.queryExecution.executedPlan)
+      assert(collectWithSubqueries(plan) { case e: HashWindowGroupLimitExec => e }.isEmpty,
+        "hash-based partial must not be used for a collated partition key")
+      // "a" and "A" collate equal under UTF8_LCASE, so they form a single group.
+      checkAnswer(df.select($"order"), Seq(Row(1), Row(5)))
+    }
+  }
+
+  test("SPARK-58324: hash-based partial window group limit without partition by") {
+    // With an empty partition spec, `InferWindowGroupLimit` rewrites `RowNumber` top-N into a
+    // `Limit + Sort` when the limit is below `topKSortFallbackThreshold`. Lowering that threshold
+    // forces the `WindowGroupLimit` path so the hash-based partial's single-group branch (no
+    // grouping, `SimpleLimitIterator` applied directly) is exercised.
+    withSQLConf(
+      SQLConf.WINDOW_GROUP_LIMIT_THRESHOLD.key -> "1000",
+      SQLConf.TOP_K_SORT_FALLBACK_THRESHOLD.key -> "1",
+      SQLConf.ADAPTIVE_EXECUTION_ENABLED.key -> "false",
+      SQLConf.WINDOW_GROUP_LIMIT_HASH_BASED_PARTIAL_ENABLED.key -> "true") {
+      val input = Seq((0, 3.0), (1, 1.0), (2, 2.0), (3, 1.0), (4, 5.0)).toDF("id", "order")
+
+      def query(): DataFrame =
+        input.withColumn("rn", row_number().over(Window.orderBy($"order")))
+          .where($"rn" <= 2)
+
+      // HASH path: a single global group is kept and limited.
+      val df = query()
+      val plan = stripAQEPlan(df.queryExecution.executedPlan)
+      assert(collectWithSubqueries(plan) { case e: HashWindowGroupLimitExec => e }.length == 1,
+        "hash-based partial should be used for an empty partition spec")
+      // The two smallest by `order` are the rows with order 1.0 (ids 1 and 3).
+      checkAnswer(df.select($"id"), Seq(Row(1), Row(3)))
+
+      // SORT_FALLBACK path with an empty partition spec: the sorted stream is limited directly by
+      // `SimpleLimitIterator` (the `partitionSpec.isEmpty` branch of `sortFallback`).
+      withSQLConf(
+        SQLConf.WINDOW_GROUP_LIMIT_HASH_BASED_PARTIAL_FALLBACK_MEMORY_THRESHOLD.key -> "1") {
+        checkAnswer(query().select($"id"), Seq(Row(1), Row(3)))
+      }
+    }
+  }
+
+  test("SPARK-58324: no window group limit is inferred for a window without order by") {
+    // `InferWindowGroupLimit` only targets rank-like functions, and those require an `ORDER BY`
+    // (an unordered `row_number`/`rank` fails analysis). So a window without an order spec is
+    // necessarily a non-rank window that never produces a `WindowGroupLimit`, hash-based or not.
+    withSQLConf(
+      SQLConf.WINDOW_GROUP_LIMIT_THRESHOLD.key -> "1000",
+      SQLConf.ADAPTIVE_EXECUTION_ENABLED.key -> "false",
+      SQLConf.WINDOW_GROUP_LIMIT_HASH_BASED_PARTIAL_ENABLED.key -> "true") {
+      val df = Seq((1, 10), (1, 20), (2, 30), (2, 40)).toDF("key", "value")
+        .withColumn("cnt", count("*").over(Window.partitionBy($"key")))
+        .where($"cnt" <= 1)
+
+      val plan = stripAQEPlan(df.queryExecution.executedPlan)
+      assert(collectWithSubqueries(plan) { case e: HashWindowGroupLimitExec => e }.isEmpty)
+      assert(collectWithSubqueries(plan) { case e: WindowGroupLimitExec => e }.isEmpty)
+      // `cnt` is 2 for every row, so nothing survives `cnt <= 1`.
+      assert(df.isEmpty)
     }
   }
 

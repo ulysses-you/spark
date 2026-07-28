@@ -4527,6 +4527,61 @@ object SQLConf {
         "The threshold of window group limit must be -1, 0 or positive integer.")
       .createWithDefault(1000)
 
+  val WINDOW_GROUP_LIMIT_HASH_BASED_PARTIAL_ENABLED =
+    buildConf("spark.sql.optimizer.windowGroupLimitHashBasedPartial.enabled")
+      .internal()
+      .doc("When true, the partial `WindowGroupLimit` for `ROW_NUMBER` uses a hash-based " +
+        "implementation that does not require its input to be sorted, avoiding the pre-shuffle " +
+        "sort that the sort-based implementation needs. It keeps a bounded number of rows per " +
+        "group in memory and adaptively falls back to the sort-based implementation, or passes " +
+        "rows through unfiltered, at runtime. Only applies to `ROW_NUMBER`; `RANK`/`DENSE_RANK` " +
+        "always use the sort-based implementation.")
+      .version("4.3.0")
+      .booleanConf
+      .createWithDefault(false)
+
+  val WINDOW_GROUP_LIMIT_HASH_BASED_PARTIAL_PASS_THROUGH_RATIO =
+    buildConf("spark.sql.optimizer.windowGroupLimitHashBasedPartial.passThroughRatio")
+      .internal()
+      .doc("The row survival ratio above which the hash-based partial `WindowGroupLimit` stops " +
+        "filtering and passes all rows through to the final `WindowGroupLimit`. After sampling " +
+        "an initial number of input rows, if the fraction of input rows that survive the " +
+        "partial limit exceeds this ratio, the partial limit is considered ineffective and is " +
+        "turned into a pass-through to avoid wasted work. Only used by the hash-based " +
+        "implementation.")
+      .version("4.3.0")
+      .doubleConf
+      .checkValue(v => v >= 0.0 && v <= 1.0,
+        "The pass-through ratio of window group limit must be in [0.0, 1.0].")
+      .createWithDefault(0.99)
+
+  val WINDOW_GROUP_LIMIT_HASH_BASED_PARTIAL_PASS_THROUGH_SAMPLE_ROWS =
+    buildConf("spark.sql.optimizer.windowGroupLimitHashBasedPartial.passThroughSampleRows")
+      .internal()
+      .doc("The number of input rows the hash-based partial `WindowGroupLimit` observes before " +
+        s"evaluating `${WINDOW_GROUP_LIMIT_HASH_BASED_PARTIAL_PASS_THROUGH_RATIO.key}` to decide " +
+        "whether to pass rows through. Only used by the hash-based implementation.")
+      .version("4.3.0")
+      .intConf
+      .checkValue(_ > 0, "The pass-through sample rows of window group limit must be positive.")
+      .createWithDefault(10000)
+
+  val WINDOW_GROUP_LIMIT_HASH_BASED_PARTIAL_FALLBACK_MEMORY_THRESHOLD =
+    buildConf("spark.sql.optimizer.windowGroupLimitHashBasedPartial.fallbackMemoryThreshold")
+      .internal()
+      .doc("The maximum number of bytes the per-group bounded buffers of the hash-based partial " +
+        "`WindowGroupLimit` may hold before it falls back to the sort-based implementation. The " +
+        "buffered rows are tracked against the task memory manager, so the hash-based partial " +
+        "also falls back whenever the manager cannot grant the memory for a new row, regardless " +
+        "of this cap; this cap is an additional upper bound. When it falls back, the buffered " +
+        "rows are dumped into a spillable external sorter and the sort-based limit is applied " +
+        "instead. By default it is Long.MaxValue, which means the fallback is driven purely by " +
+        "task memory pressure. Only used by the hash-based implementation.")
+      .version("4.3.0")
+      .bytesConf(ByteUnit.BYTE)
+      .checkValue(_ > 0, "The fallback memory threshold of window group limit must be positive.")
+      .createWithDefault(Long.MaxValue)
+
   val WINDOW_SEGMENT_TREE_ENABLED =
     buildConf("spark.sql.window.segmentTree.enabled")
       .withBindingPolicy(ConfigBindingPolicy.NOT_APPLICABLE)
@@ -8894,6 +8949,18 @@ class SQLConf extends Serializable with Logging with SqlApiConf {
   def windowExecBufferSpillSizeThreshold: Long = getConf(WINDOW_EXEC_BUFFER_SIZE_SPILL_THRESHOLD)
 
   def windowGroupLimitThreshold: Int = getConf(WINDOW_GROUP_LIMIT_THRESHOLD)
+
+  def windowGroupLimitHashBasedPartialEnabled: Boolean =
+    getConf(WINDOW_GROUP_LIMIT_HASH_BASED_PARTIAL_ENABLED)
+
+  def windowGroupLimitHashBasedPartialPassThroughRatio: Double =
+    getConf(WINDOW_GROUP_LIMIT_HASH_BASED_PARTIAL_PASS_THROUGH_RATIO)
+
+  def windowGroupLimitHashBasedPartialPassThroughSampleRows: Int =
+    getConf(WINDOW_GROUP_LIMIT_HASH_BASED_PARTIAL_PASS_THROUGH_SAMPLE_ROWS)
+
+  def windowGroupLimitHashBasedPartialFallbackMemoryThreshold: Long =
+    getConf(WINDOW_GROUP_LIMIT_HASH_BASED_PARTIAL_FALLBACK_MEMORY_THRESHOLD)
 
   def windowSegmentTreeEnabled: Boolean = getConf(WINDOW_SEGMENT_TREE_ENABLED)
 

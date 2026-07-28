@@ -32,6 +32,7 @@ import org.apache.spark.sql.catalyst.plans._
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.streaming.{InternalOutputModes, StreamingRelationV2}
 import org.apache.spark.sql.catalyst.types.DataTypeUtils
+import org.apache.spark.sql.catalyst.util.UnsafeRowUtils
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.errors.{QueryCompilationErrors, QueryExecutionErrors}
 import org.apache.spark.sql.execution.{SparkStrategy => Strategy}
@@ -802,8 +803,26 @@ abstract class SparkStrategies extends QueryPlanner[SparkPlan] {
   object WindowGroupLimit extends Strategy {
     def apply(plan: LogicalPlan): Seq[SparkPlan] = plan match {
       case logical.WindowGroupLimit(partitionSpec, orderSpec, rankLikeFunction, limit, child) =>
-        val partialWindowGroupLimit = execution.window.WindowGroupLimitExec(partitionSpec,
-          orderSpec, rankLikeFunction, limit, execution.window.Partial, planLater(child))
+        // The hash-based partial does not require its input to be sorted, so it avoids the
+        // pre-shuffle sort that the sort-based partial needs. It is only safe for `RowNumber`.
+        // `RemoveRedundantWindowGroupLimits` later converts it back to the sort-based partial when
+        // the child is already sorted, since the sort-based partial is free in that case.
+        //
+        // It buckets rows by the partition key in a hash map keyed on the `UnsafeRow` binary
+        // representation, so it is only correct when every partition key type is binary stable.
+        // For non-binary-stable types (e.g. collated strings), logically equal keys can have
+        // different byte representations and would be split across buckets, so fall back to the
+        // sort-based partial, which groups via a collation-aware ordering. This mirrors the
+        // binary-stability gate in `WindowEvaluatorFactory` and `SortAggregateExec`.
+        val partialWindowGroupLimit = if (conf.windowGroupLimitHashBasedPartialEnabled &&
+          rankLikeFunction.isInstanceOf[RowNumber] &&
+          partitionSpec.forall(e => UnsafeRowUtils.isBinaryStable(e.dataType))) {
+          execution.window.HashWindowGroupLimitExec(
+            partitionSpec, orderSpec, rankLikeFunction, limit, planLater(child))
+        } else {
+          execution.window.WindowGroupLimitExec(partitionSpec, orderSpec, rankLikeFunction, limit,
+            execution.window.Partial, planLater(child))
+        }
         val finalWindowGroupLimit = execution.window.WindowGroupLimitExec(partitionSpec, orderSpec,
           rankLikeFunction, limit, execution.window.Final, partialWindowGroupLimit)
         finalWindowGroupLimit :: Nil

@@ -19,8 +19,9 @@ package org.apache.spark.sql.execution
 
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.execution.adaptive.{AdaptiveSparkPlanHelper, DisableAdaptiveExecutionSuite, EnableAdaptiveExecutionSuite}
-import org.apache.spark.sql.execution.window.WindowGroupLimitExec
-import org.apache.spark.sql.functions.lit
+import org.apache.spark.sql.execution.window.{HashWindowGroupLimitExec, Partial, WindowGroupLimitExec}
+import org.apache.spark.sql.functions.{lit, row_number}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 
 abstract class RemoveRedundantWindowGroupLimitsSuiteBase
@@ -67,6 +68,68 @@ abstract class RemoveRedundantWindowGroupLimitsSuiteBase
           |WHERE rn < 3
           |""".stripMargin
       checkWindowGroupLimits(query2, 2)
+    }
+  }
+
+  test("SPARK-58324: hash-based partial has no pre-shuffle sort") {
+    import testImplicits._
+    withSQLConf(SQLConf.WINDOW_GROUP_LIMIT_THRESHOLD.key -> "1000") {
+      val df = spark.range(0, 100)
+        .selectExpr("id", "id % 7 AS key", "id AS order")
+        .toDF()
+      val window = org.apache.spark.sql.expressions.Window
+        .partitionBy($"key").orderBy($"order")
+
+      def partialAndSortBelow(hashBased: Boolean): (SparkPlan, Boolean) = {
+        withSQLConf(
+          SQLConf.WINDOW_GROUP_LIMIT_HASH_BASED_PARTIAL_ENABLED.key -> hashBased.toString) {
+          val query = df.withColumn("rn", row_number().over(window)).where($"rn" <= 2)
+          val plan = query.queryExecution.executedPlan
+          val partials = collectWithSubqueries(plan) {
+            case e: WindowGroupLimitExec if e.mode == Partial => e
+            case e: HashWindowGroupLimitExec => e
+          }
+          // Exactly one partial node below the final node, straddling the shuffle.
+          assert(partials.length == 1)
+          val partial = partials.head
+          val hasSort = find(partial)(_.isInstanceOf[SortExec]).isDefined
+          (partial, hasSort)
+        }
+      }
+
+      // The sort-based partial forces a pre-shuffle sort; the hash-based partial does not.
+      val (sortedPartial, sortedHasSort) = partialAndSortBelow(hashBased = false)
+      assert(sortedPartial.isInstanceOf[WindowGroupLimitExec])
+      assert(sortedHasSort, "sort-based partial should have a pre-shuffle SortExec below it")
+
+      val (hashPartial, hashHasSort) = partialAndSortBelow(hashBased = true)
+      assert(hashPartial.isInstanceOf[HashWindowGroupLimitExec])
+      assert(!hashHasSort, "hash-based partial should not have a pre-shuffle SortExec below it")
+    }
+  }
+
+  test("SPARK-58324: hash-based partial converts to sort-based when child is already ordered") {
+    import testImplicits._
+    withSQLConf(
+      SQLConf.WINDOW_GROUP_LIMIT_THRESHOLD.key -> "1000",
+      SQLConf.WINDOW_GROUP_LIMIT_HASH_BASED_PARTIAL_ENABLED.key -> "true",
+      SQLConf.AUTO_BROADCASTJOIN_THRESHOLD.key -> "-1") {
+      // Sort the input the way the partial needs, so the child ordering already satisfies
+      // (partitionSpec, orderSpec) and the physical rule should convert the hash-based partial
+      // back to a sort-based one.
+      val df = spark.range(0, 100)
+        .selectExpr("id", "id % 7 AS key", "id AS order")
+        .toDF()
+        .sortWithinPartitions($"key", $"order")
+      val window = org.apache.spark.sql.expressions.Window
+        .partitionBy($"key").orderBy($"order")
+      val query = df.withColumn("rn", row_number().over(window)).where($"rn" <= 2)
+      val plan = query.queryExecution.executedPlan
+      assert(collectWithSubqueries(plan) {
+        case e: WindowGroupLimitExec if e.mode == Partial => e
+      }.nonEmpty, "partial should be converted to the sort-based node when the child is ordered")
+      assert(collectWithSubqueries(plan) { case e: HashWindowGroupLimitExec => e }.isEmpty)
+      checkAnswer(query, query.collect())
     }
   }
 }
